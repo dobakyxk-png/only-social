@@ -1,0 +1,15 @@
+node_modules/
+dist/
+coverage/
+cloudflared.exe
+cloudflared-windows-amd64.exe
+*.log
+.env
+auto-*.js
+check-*.js
+inspect-*.js
+nav-*.js
+get-*.js
+upload-*.js
+list-*.js
+open-*.js

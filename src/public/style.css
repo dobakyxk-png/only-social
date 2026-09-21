@@ -1,0 +1,162 @@
+/* Tinh chỉnh bản đồ Leaflet */
+.leaflet-container {
+  width: 100%;
+  height: 100%;
+  background: #090d16;
+  font-family: inherit;
+}
+
+/* Biểu tượng Radar toả sóng cho người dùng hiện tại */
+.user-radar-pulse {
+  position: relative;
+  width: 24px;
+  height: 24px;
+}
+
+.user-radar-pulse .dot {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  top: 4px;
+  left: 4px;
+  background-color: #10b981;
+  border: 3px solid #ffffff;
+  border-radius: 50%;
+  box-shadow: 0 0 12px #10b981;
+}
+
+.user-radar-pulse .ring {
+  position: absolute;
+  width: 48px;
+  height: 48px;
+  top: -12px;
+  left: -12px;
+  border: 2px solid #10b981;
+  border-radius: 50%;
+  animation: radarRipple 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+  pointer-events: none;
+}
+
+@keyframes radarRipple {
+  0% {
+    transform: scale(0.3);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(1.8);
+    opacity: 0;
+  }
+}
+
+/* Marker hình tròn avatar của người xung quanh */
+.marker-nearby-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 2.5px solid #10b981;
+  background-size: cover;
+  background-position: center;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
+  transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  cursor: pointer;
+}
+
+.marker-nearby-avatar:hover {
+  transform: scale(1.2);
+  border-color: #34d399;
+  z-index: 1000 !important;
+}
+
+/* Marker Ghim Check-in trên Bản đồ (Giai đoạn 2) */
+.marker-checkin-pin {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  border: 2px solid #ffffff;
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.6);
+  cursor: pointer;
+  transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.marker-checkin-pin:hover {
+  transform: rotate(-45deg) scale(1.25);
+  z-index: 1000 !important;
+}
+
+.marker-checkin-pin span {
+  transform: rotate(45deg);
+  font-size: 14px;
+  line-height: 1;
+}
+
+/* Thanh cuộn tối giản */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.6);
+}
+
+::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+
+/* TỐI ƯU GIAO DIỆN DI ĐỘNG (MOBILE-FIRST OPTIMIZATION) */
+@media (max-width: 767px) {
+  /* Điều khiển lớp bản đồ Google Maps trên điện thoại nằm trên thanh Bottom Nav */
+  .leaflet-bottom.leaflet-left {
+    bottom: 80px !important;
+    left: 10px !important;
+  }
+
+  .leaflet-bottom.leaflet-right {
+    bottom: 80px !important;
+    right: 10px !important;
+  }
+
+  /* Nút bấm chuyển lớp bản đồ Google Maps gọn gàng trên mobile */
+  .leaflet-control-layers {
+    background: rgba(15, 23, 42, 0.9) !important;
+    color: #f1f5f9 !important;
+    border: 1px solid #334155 !important;
+    border-radius: 14px !important;
+    backdrop-filter: blur(8px);
+    font-size: 11px !important;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.5) !important;
+  }
+
+  .leaflet-control-layers-expanded {
+    padding: 8px 12px !important;
+  }
+
+  /* Tránh chạm nhầm nút zoom */
+  .leaflet-control-zoom a {
+    width: 34px !important;
+    height: 34px !important;
+    line-height: 34px !important;
+    background: rgba(15, 23, 42, 0.9) !important;
+    color: #f1f5f9 !important;
+    border-color: #334155 !important;
+    border-radius: 10px !important;
+  }
+
+  /* Tránh bounce cuộn toàn trang trên iOS Safari */
+  body {
+    overscroll-behavior-y: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+

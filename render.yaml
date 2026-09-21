@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: only-social-network
+    env: node
+    plan: free
+    region: singapore
+    buildCommand: pnpm install && pnpm run build
+    startCommand: node dist/src/main.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: JWT_SECRET
+        value: only-production-jwt-secret-key-2026
+      - key: BLUR_MIN_METERS
+        value: 100
+      - key: BLUR_MAX_METERS
+        value: 300
