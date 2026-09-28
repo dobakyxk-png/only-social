@@ -42,9 +42,9 @@ app.get('/', (_req: Request, res: Response) => {
 
 // Public client configuration: Mapbox public token is intended for browser use and is restricted by Mapbox URL scopes.
 app.get('/api/config/public.js', (_req: Request, res: Response) => {
-  const rawToken = String(CONFIG.MAPBOX_ACCESS_TOKEN || '');
-  const rawStyle = String(CONFIG.MAPBOX_STYLE || '');
-  const mapboxToken = rawToken.startsWith('pk.eyJ') ? rawToken : '';
+  const rawToken = String(CONFIG.MAPBOX_ACCESS_TOKEN || '').trim();
+  const rawStyle = String(CONFIG.MAPBOX_STYLE || '').trim();
+  const mapboxToken = rawToken.startsWith('pk.eyJ') && rawToken.length > 80 ? rawToken : '';
   const mapboxStyle = rawStyle.includes('mapbox://styles/') ? rawStyle : 'mapbox://styles/mapbox/streets-v12';
   res.type('application/javascript').send(`window.ONLY_PUBLIC_CONFIG=${JSON.stringify({ mapboxToken, mapboxStyle })};`);
 });
