@@ -12,6 +12,7 @@ import { feedRouter } from './modules/feed/feed.controller';
 import { notificationsRouter } from './modules/notifications/notifications.controller';
 import { callingRouter } from './modules/calling/calling.controller';
 import { moderationRouter } from './modules/moderation/moderation.controller';
+import { ridesRouter } from './modules/rides/rides.controller';
 
 const app = express();
 
@@ -59,6 +60,7 @@ app.use('/api/v1/feed', feedRouter);
 app.use('/api/v1/notifications', notificationsRouter);
 app.use('/api/v1/calls', callingRouter);
 app.use('/api/v1/moderation', moderationRouter);
+app.use('/api/v1/rides', ridesRouter);
 
 // Fallback error handler
 app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {

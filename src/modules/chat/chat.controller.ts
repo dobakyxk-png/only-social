@@ -5,6 +5,20 @@ import { uploadMiddleware, StorageService } from '../storage/storage.service';
 
 const router = Router();
 
+// POST /api/v1/chat/conversations (Tạo nhóm chat)
+router.post('/conversations', authMiddleware, (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { name, memberIds } = req.body;
+    if (!Array.isArray(memberIds)) {
+      return res.status(400).json({ success: false, message: 'Vui lòng chọn thành viên cho nhóm' });
+    }
+    const group = ChatService.createGroupConversation(req.user!.userId, memberIds, name);
+    res.status(201).json({ success: true, message: 'Đã tạo nhóm chat', data: group });
+  } catch (error: any) {
+    res.status(400).json({ success: false, message: error.message || 'Không thể tạo nhóm chat' });
+  }
+});
+
 // GET /api/v1/chat/conversations (Danh sách cuộc trò chuyện)
 router.get('/conversations', authMiddleware, (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -19,6 +33,16 @@ router.get('/conversations', authMiddleware, (req: AuthenticatedRequest, res: Re
       success: false,
       message: error.message,
     });
+  }
+});
+
+// GET /api/v1/chat/conversations/:id (Chi tiết nhóm chat)
+router.get('/conversations/:id', authMiddleware, (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const group = ChatService.getGroupConversation(req.user!.userId, req.params.id as string);
+    res.json({ success: true, data: group });
+  } catch (error: any) {
+    res.status(404).json({ success: false, message: error.message });
   }
 });
 
@@ -43,33 +67,21 @@ router.get(
   }
 );
 
-// POST /api/v1/chat/send (Gửi tin nhắn qua REST API)
+// POST /api/v1/chat/send (Gửi tin nhắn 1-1 hoặc nhóm qua REST API)
 router.post('/send', authMiddleware, (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { receiverId, content, mediaUrl, type } = req.body;
-    if (!receiverId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Vui lòng cung cấp receiverId',
-      });
+    const { receiverId, conversationId, content, mediaUrl, type } = req.body;
+    if (!receiverId && !conversationId) {
+      return res.status(400).json({ success: false, message: 'Vui lòng cung cấp receiverId hoặc conversationId' });
     }
 
-    const result = ChatService.sendMessage(req.user!.userId, receiverId, {
-      content,
-      mediaUrl,
-      type,
-    });
+    const result = conversationId
+      ? ChatService.sendMessageToConversation(req.user!.userId, conversationId, { content, mediaUrl, type })
+      : ChatService.sendMessage(req.user!.userId, receiverId, { content, mediaUrl, type });
 
-    res.status(201).json({
-      success: true,
-      message: 'Đã gửi tin nhắn',
-      data: result,
-    });
+    res.status(201).json({ success: true, message: 'Đã gửi tin nhắn', data: result });
   } catch (error: any) {
-    res.status(400).json({
-      success: false,
-      message: error.message,
-    });
+    res.status(400).json({ success: false, message: error.message });
   }
 });
 

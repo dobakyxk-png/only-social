@@ -73,6 +73,27 @@ router.put('/settings', authMiddleware, (req: AuthenticatedRequest, res: Respons
   }
 });
 
+// GET /api/v1/users/search?q=... (Tìm theo tên, biệt danh hoặc số điện thoại)
+// Route này phải đứng trước /:id để "search" không bị hiểu là userId.
+router.get('/search', authMiddleware, (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const query = typeof req.query.q === 'string' ? req.query.q : '';
+    const requestedLimit = typeof req.query.limit === 'string' ? Number(req.query.limit) : 20;
+    const limit = Number.isFinite(requestedLimit) ? requestedLimit : 20;
+    const results = UsersService.searchUsers(req.user!.userId, query, limit);
+    res.json({
+      success: true,
+      count: results.length,
+      data: results,
+    });
+  } catch (error: any) {
+    res.status(400).json({
+      success: false,
+      message: error.message || 'Lỗi khi tìm kiếm người dùng',
+    });
+  }
+});
+
 // GET /api/v1/users/:id (Xem trang cá nhân người khác)
 router.get('/:id', authMiddleware, (req: AuthenticatedRequest, res: Response) => {
   try {

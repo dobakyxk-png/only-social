@@ -36,6 +36,40 @@ describe('Friends & 1-1 Chat Service', () => {
     });
   });
 
+  describe('User Search & Group Chat', () => {
+    it('Tìm người dùng theo tên và số điện thoại, không lộ dữ liệu nhạy cảm', () => {
+      const byName = UsersService.searchUsers(userA, 'Lan Anh');
+      expect(byName.some((user) => user.userId === 'user-sample-01')).toBe(false);
+      expect(byName.every((user) => !('passwordHash' in user) && !('email' in user))).toBe(true);
+
+      const byPhone = UsersService.searchUsers(userA, '0912345678');
+      expect(byPhone.some((user) => user.userId === userB)).toBe(true);
+      expect(byPhone.find((user) => user.userId === userB)?.phoneMasked).toBe('091****78');
+    });
+
+    it('Không cho phép tìm kiếm với truy vấn quá ngắn', () => {
+      expect(() => UsersService.searchUsers(userA, 'a')).toThrow('ít nhất 2 ký tự');
+    });
+
+    it('Tạo nhóm, gửi tin và đọc tin theo quyền thành viên', () => {
+      const group = ChatService.createGroupConversation(userA, [userB, strangerC], 'Nhóm Only thử nghiệm');
+      expect(group.type).toBe('group');
+      expect(group.memberCount).toBe(3);
+      expect(group.name).toBe('Nhóm Only thử nghiệm');
+
+      const sent = ChatService.sendMessageToConversation(userB, group.conversationId, {
+        content: 'Xin chào cả nhóm',
+        type: 'text',
+      });
+      expect(sent.message.content).toBe('Xin chào cả nhóm');
+      expect(ChatService.getMessages(userA, group.conversationId)).toHaveLength(1);
+      expect(ChatService.markAsRead(userA, group.conversationId)).toHaveLength(1);
+
+      expect(() => ChatService.getMessages('not-a-member', group.conversationId)).toThrow('không phải thành viên');
+      expect(() => ChatService.sendMessageToConversation('not-a-member', group.conversationId, { content: 'x' })).toThrow('không phải thành viên');
+    });
+  });
+
   describe('1-1 Realtime Chat & Stranger Privacy', () => {
     it('Hai người bạn có thể nhắn tin cho nhau bình thường', () => {
       const { conversation, message } = ChatService.sendMessage(userA, userB, {

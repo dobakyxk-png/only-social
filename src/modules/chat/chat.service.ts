@@ -1,5 +1,5 @@
 import { db } from '../../database/data-store';
-import { Conversation, Message } from '../../types';
+import { Conversation, GroupConversationDTO, Message } from '../../types';
 
 export class ChatService {
   /**
@@ -28,6 +28,81 @@ export class ChatService {
     }
 
     return conv;
+  }
+
+  /**
+   * Tạo nhóm chat mới. Creator luôn là admin và cũng là thành viên nhóm.
+   */
+  static createGroupConversation(creatorId: string, memberIds: string[], name: string): GroupConversationDTO {
+    const cleanName = name?.trim();
+    if (!cleanName) throw new Error('Vui lòng nhập tên nhóm chat');
+    if (cleanName.length > 80) throw new Error('Tên nhóm chat tối đa 80 ký tự');
+
+    const uniqueMemberIds = Array.from(new Set([creatorId, ...(memberIds || [])]));
+    if (uniqueMemberIds.length < 2) {
+      throw new Error('Nhóm chat cần ít nhất 2 thành viên');
+    }
+    if (uniqueMemberIds.length > 50) {
+      throw new Error('Nhóm chat tối đa 50 thành viên');
+    }
+
+    for (const memberId of uniqueMemberIds) {
+      const user = db.users.get(memberId);
+      if (!user || user.status !== 'active') {
+        throw new Error('Một hoặc nhiều thành viên không tồn tại hoặc đã ngừng hoạt động');
+      }
+      if (memberId !== creatorId && db.isBlocked(creatorId, memberId)) {
+        throw new Error('Không thể thêm người dùng đã bị chặn vào nhóm');
+      }
+    }
+
+    const createdAt = new Date();
+    const conversation: Conversation = {
+      id: `group_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      type: 'group',
+      memberIds: uniqueMemberIds,
+      name: cleanName,
+      createdBy: creatorId,
+      adminIds: [creatorId],
+      createdAt,
+      lastMessageAt: createdAt,
+    };
+    db.conversations.set(conversation.id, conversation);
+    return this.toGroupDTO(conversation);
+  }
+
+  /** Gửi tin nhắn vào nhóm; thành viên được xác thực ở server. */
+  static sendMessageToConversation(
+    senderId: string,
+    conversationId: string,
+    payload: {
+      content?: string;
+      mediaUrl?: string;
+      type?: 'text' | 'image' | 'emoji' | 'location_pin';
+    }
+  ): { conversation: Conversation; message: Message } {
+    const conversation = db.conversations.get(conversationId);
+    if (!conversation || !conversation.memberIds.includes(senderId)) {
+      throw new Error('Bạn không phải thành viên của cuộc trò chuyện này');
+    }
+    if (conversation.type !== 'group') {
+      throw new Error('Hội thoại này không phải nhóm chat');
+    }
+
+    const message: Message = {
+      id: `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      conversationId,
+      senderId,
+      type: payload.type || (payload.mediaUrl ? 'image' : 'text'),
+      content: payload.content,
+      mediaUrl: payload.mediaUrl,
+      status: 'sent',
+      createdAt: new Date(),
+    };
+    db.messages.set(message.id, message);
+    conversation.lastMessageAt = message.createdAt;
+    db.conversations.set(conversation.id, conversation);
+    return { conversation, message };
   }
 
   /**
@@ -85,10 +160,47 @@ export class ChatService {
     return { conversation, message };
   }
 
+  private static toGroupDTO(conversation: Conversation): GroupConversationDTO {
+    const members = conversation.memberIds
+      .map((memberId) => {
+        const profile = db.profiles.get(memberId);
+        return profile
+          ? { userId: memberId, fullName: profile.fullName, avatarUrl: profile.avatarUrl }
+          : null;
+      })
+      .filter(Boolean) as GroupConversationDTO['members'];
+
+    return {
+      conversationId: conversation.id,
+      type: 'group',
+      name: conversation.name || 'Nhóm chat Only',
+      memberCount: conversation.memberIds.length,
+      members,
+      createdBy: conversation.createdBy || conversation.memberIds[0],
+      updatedAt: conversation.lastMessageAt || conversation.createdAt,
+    };
+  }
+
+  /**
+   * Lấy một nhóm chat theo quyền thành viên
+   */
+  static getGroupConversation(userId: string, conversationId: string): GroupConversationDTO {
+    const conversation = db.conversations.get(conversationId);
+    if (!conversation || conversation.type !== 'group' || !conversation.memberIds.includes(userId)) {
+      throw new Error('Không tìm thấy nhóm chat hoặc bạn không phải thành viên');
+    }
+    return this.toGroupDTO(conversation);
+  }
+
   /**
    * Đánh dấu các tin nhắn trong hội thoại là đã đọc
    */
   static markAsRead(userId: string, conversationId: string): string[] {
+    const conversation = db.conversations.get(conversationId);
+    if (!conversation || !conversation.memberIds.includes(userId)) {
+      throw new Error('Bạn không phải thành viên của cuộc trò chuyện này');
+    }
+
     const readMessageIds: string[] = [];
 
     for (const msg of db.messages.values()) {
@@ -134,9 +246,24 @@ export class ChatService {
           }
         }
 
+        const isGroup = conv.type === 'group';
+        const groupMembers = isGroup
+          ? conv.memberIds
+              .filter((id) => id !== userId)
+              .map((id) => {
+                const p = db.profiles.get(id);
+                return p ? { userId: id, fullName: p.fullName, avatarUrl: p.avatarUrl } : null;
+              })
+              .filter(Boolean)
+          : undefined;
+
         list.push({
           conversationId: conv.id,
-          partner: partnerProfile
+          type: conv.type,
+          name: isGroup ? conv.name || 'Nhóm chat Only' : undefined,
+          memberCount: isGroup ? conv.memberIds.length : undefined,
+          members: groupMembers,
+          partner: !isGroup && partnerProfile
             ? {
                 userId: partnerId,
                 fullName: partnerProfile.fullName,

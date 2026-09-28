@@ -11,6 +11,9 @@ const STATE = {
   radiusMeters: 5000,
   activeChatPartnerId: null,
   activeConversationId: null,
+  activeConversationType: 'direct',
+  activeConversationName: '',
+  groupSelectedMembers: [],
   socket: null,
   map: null,
   userMarker: null,
@@ -30,6 +33,13 @@ const STATE = {
   activeCallSession: null,
   callTimerInterval: null,
   callSeconds: 0,
+
+  // Giai đoạn 4 state (Only Ride - Đi lại & Tiện chuyến)
+  driverEarningMode: false,
+  activeRide: null,
+  rideOffers: [],
+  ridePickupCoords: null,
+  rideDropoffCoords: null,
 };
 
 // Khởi tạo icon Lucide
@@ -37,6 +47,23 @@ function refreshIcons() {
   if (window.lucide) {
     window.lucide.createIcons();
   }
+}
+
+function showToast(message, type = 'info') {
+  let toast = document.getElementById('onlyToast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'onlyToast';
+    toast.className = 'fixed left-1/2 -translate-x-1/2 bottom-20 md:bottom-6 z-[80] max-w-[90vw] px-4 py-3 rounded-2xl text-xs font-semibold shadow-2xl border transition opacity-0 pointer-events-none';
+    document.body.appendChild(toast);
+  }
+  toast.className = `fixed left-1/2 -translate-x-1/2 bottom-20 md:bottom-6 z-[80] max-w-[90vw] px-4 py-3 rounded-2xl text-xs font-semibold shadow-2xl border transition opacity-100 ${type === 'error' ? 'bg-rose-950 text-rose-200 border-rose-800' : type === 'success' ? 'bg-emerald-950 text-emerald-200 border-emerald-800' : 'bg-slate-800 text-slate-100 border-slate-700'}`;
+  toast.innerText = message;
+  clearTimeout(window.__onlyToastTimer);
+  window.__onlyToastTimer = setTimeout(() => {
+    toast.classList.add('opacity-0');
+    toast.classList.remove('opacity-100');
+  }, 3200);
 }
 
 // ------------------------------------------------------------------------------
@@ -721,6 +748,10 @@ function connectSocket() {
 
   // Xác nhận tin nhắn đã gửi
   STATE.socket.on('chat:sent_success', (payload) => {
+    if (payload.conversation?.id) {
+      STATE.activeConversationId = payload.conversation.id;
+      STATE.activeConversationType = payload.conversation.type || STATE.activeConversationType;
+    }
     appendMessageBubble(payload.message, true);
   });
 
@@ -779,15 +810,19 @@ function connectSocket() {
 }
 
 function handleIncomingMessage(payload) {
-  if (STATE.activeChatPartnerId === payload.message.senderId) {
-    appendMessageBubble(payload.message, false);
+  const isActiveConversation = STATE.activeConversationId === payload.conversation.id;
+  if (isActiveConversation) {
+    appendMessageBubble(payload.message, payload.message.senderId === STATE.currentUser?.id);
     if (STATE.socket) {
-      STATE.socket.emit('chat:read', {
-        conversationId: payload.conversation.id,
-        partnerId: payload.message.senderId,
+      const recipients = payload.conversation.memberIds?.filter((id) => id !== STATE.currentUser?.id) || [payload.message.senderId];
+      recipients.forEach((partnerId) => {
+        STATE.socket.emit('chat:read', {
+          conversationId: payload.conversation.id,
+          partnerId,
+        });
       });
     }
-  } else {
+  } else { 
     const badge = document.getElementById('badgeUnread');
     badge.classList.remove('hidden');
     badge.innerText = parseInt(badge.innerText || '0') + 1;
@@ -1010,10 +1045,38 @@ async function testProfanity() {
 // ------------------------------------------------------------------------------
 // 9. NHẮN TIN 1-1 (CHAT DRAWER)
 // ------------------------------------------------------------------------------
+async function openChatConversation(conversation, directUser = null) {
+  STATE.activeConversationId = conversation.conversationId || conversation.id;
+  STATE.activeConversationType = conversation.type || 'direct';
+  STATE.activeConversationName = conversation.name || directUser?.fullName || conversation.partner?.fullName || 'Tin nhắn';
+  STATE.activeChatPartnerId = directUser?.userId || conversation.partner?.userId || null;
+
+  const avatar = directUser?.avatarUrl || conversation.partner?.avatarUrl || 'https://api.dicebear.com/7.x/bottts/svg?seed=' + STATE.activeConversationId;
+  document.getElementById('chatPartnerAvatar').src = avatar;
+  document.getElementById('chatPartnerName').innerText = STATE.activeConversationName;
+  document.getElementById('chatTypingStatus').innerText = STATE.activeConversationType === 'group'
+    ? `${conversation.memberCount || conversation.members?.length || 0} thành viên`
+    : 'Đang trực tuyến';
+  document.getElementById('chatDrawer').classList.remove('translate-x-full');
+
+  const stream = document.getElementById('chatMessagesStream');
+  stream.innerHTML = '<div class="text-center py-4 text-xs text-slate-500">Đang tải lịch sử trò chuyện...</div>';
+  try {
+    const resMsg = await apiRequest(`/chat/conversations/${STATE.activeConversationId}/messages`);
+    renderMessagesStream(resMsg.data);
+    await apiRequest(`/chat/conversations/${STATE.activeConversationId}/read`, 'POST');
+  } catch (err) {
+    stream.innerHTML = `<div class="text-center py-4 text-xs text-rose-400">${err.message}</div>`;
+  }
+}
+
 async function openChatWithUser(user) {
   STATE.activeChatPartnerId = user.userId;
-  document.getElementById('chatPartnerAvatar').src = user.avatarUrl;
+  STATE.activeConversationType = 'direct';
+  STATE.activeConversationName = user.fullName;
+  document.getElementById('chatPartnerAvatar').src = user.avatarUrl || 'https://api.dicebear.com/7.x/bottts/svg?seed=' + user.userId;
   document.getElementById('chatPartnerName').innerText = user.fullName;
+  document.getElementById('chatTypingStatus').innerText = 'Đang trực tuyến';
   document.getElementById('chatDrawer').classList.remove('translate-x-full');
 
   const stream = document.getElementById('chatMessagesStream');
@@ -1084,27 +1147,152 @@ function appendMessageBubble(msg, isMe) {
 async function handleSendMessage() {
   const input = document.getElementById('chatTextInput');
   const text = input.value.trim();
-  if (!text || !STATE.activeChatPartnerId) return;
+  if (!text || (!STATE.activeConversationId && !STATE.activeChatPartnerId)) return;
 
   input.value = '';
+  const payload = STATE.activeConversationType === 'group'
+    ? { conversationId: STATE.activeConversationId, content: text, type: 'text' }
+    : { receiverId: STATE.activeChatPartnerId, content: text, type: 'text' };
 
   if (STATE.socket && STATE.socket.connected) {
-    STATE.socket.emit('chat:send', {
-      receiverId: STATE.activeChatPartnerId,
-      content: text,
-      type: 'text',
-    });
+    STATE.socket.emit('chat:send', payload);
   } else {
     try {
-      const res = await apiRequest('/chat/send', 'POST', {
-        receiverId: STATE.activeChatPartnerId,
-        content: text,
-        type: 'text',
-      });
+      const res = await apiRequest('/chat/send', 'POST', payload);
+      STATE.activeConversationId = res.data.conversation.id;
       appendMessageBubble(res.data.message, true);
     } catch (e) {
       alert(e.message);
     }
+  }
+}
+
+async function searchUsersForChat(query, target = 'general') {
+  const statusId = target === 'group' ? 'groupChatStatus' : 'userSearchStatus';
+  const resultsId = target === 'group' ? 'listGroupMemberSearchResults' : 'listUserSearchResults';
+  const statusEl = document.getElementById(statusId);
+  const resultsEl = document.getElementById(resultsId);
+  const cleanQuery = query.trim();
+  if (!cleanQuery) {
+    statusEl.innerText = '';
+    resultsEl.innerHTML = '';
+    resultsEl.classList.add('hidden');
+    return [];
+  }
+
+  statusEl.innerText = 'Đang tìm người dùng...';
+  try {
+    const res = await apiRequest(`/users/search?q=${encodeURIComponent(cleanQuery)}`);
+    const users = res.data || [];
+    statusEl.innerText = users.length ? `Tìm thấy ${users.length} người dùng` : 'Không tìm thấy người dùng phù hợp';
+    resultsEl.innerHTML = '';
+    resultsEl.classList.remove('hidden');
+    resultsEl.classList.add('flex');
+
+    users.forEach((user) => {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'w-full min-h-14 text-left p-2 rounded-xl bg-slate-900/70 hover:bg-slate-700 border border-slate-700/70 flex items-center justify-between gap-2 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400';
+      const avatar = user.avatarUrl || 'https://api.dicebear.com/7.x/bottts/svg?seed=' + user.userId;
+      item.innerHTML = `
+        <span class="flex items-center gap-2 min-w-0">
+          <img src="${avatar}" alt="${user.fullName}" class="w-9 h-9 rounded-full object-cover shrink-0">
+          <span class="min-w-0">
+            <strong class="block text-xs text-slate-100 truncate">${user.fullName}</strong>
+            <span class="block text-[10px] text-slate-400 truncate">${user.phoneMasked || (user.isFriend ? 'Bạn bè' : 'Người dùng Only')}</span>
+          </span>
+        </span>
+        <span class="text-[10px] text-emerald-400 shrink-0">${target === 'group' ? 'Thêm' : 'Nhắn tin'}</span>
+      `;
+      item.onclick = () => {
+        if (target === 'group') {
+          addGroupMember(user);
+        } else {
+          resultsEl.classList.add('hidden');
+          openChatWithUser(user);
+        }
+      };
+      resultsEl.appendChild(item);
+    });
+    return users;
+  } catch (err) {
+    statusEl.innerText = err.message;
+    resultsEl.innerHTML = '';
+    resultsEl.classList.add('hidden');
+    return [];
+  }
+}
+
+function renderSelectedGroupMembers() {
+  const listEl = document.getElementById('listSelectedGroupMembers');
+  listEl.innerHTML = '';
+  if (!STATE.groupSelectedMembers.length) {
+    listEl.innerHTML = '<span class="text-[10px] text-slate-500 italic">Chưa chọn ai ngoài bạn</span>';
+    return;
+  }
+  STATE.groupSelectedMembers.forEach((user) => {
+    const chip = document.createElement('span');
+    chip.className = 'inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-emerald-950/70 border border-emerald-800 text-[10px] text-emerald-300';
+    chip.innerHTML = `<span>${user.fullName}</span><button type="button" class="min-w-6 min-h-6 rounded-full hover:bg-rose-900 hover:text-rose-300" aria-label="Bỏ ${user.fullName}">×</button>`;
+    chip.querySelector('button').onclick = () => {
+      STATE.groupSelectedMembers = STATE.groupSelectedMembers.filter((member) => member.userId !== user.userId);
+      renderSelectedGroupMembers();
+    };
+    listEl.appendChild(chip);
+  });
+}
+
+function addGroupMember(user) {
+  if (!STATE.groupSelectedMembers.some((member) => member.userId === user.userId)) {
+    STATE.groupSelectedMembers.push(user);
+    renderSelectedGroupMembers();
+    document.getElementById('inputGroupMemberSearch').value = '';
+    document.getElementById('listGroupMemberSearchResults').classList.add('hidden');
+    document.getElementById('groupChatStatus').innerText = `Đã chọn ${STATE.groupSelectedMembers.length} thành viên`;
+  }
+}
+
+function openGroupChatModal() {
+  STATE.groupSelectedMembers = [];
+  document.getElementById('inputGroupName').value = '';
+  document.getElementById('inputGroupMemberSearch').value = '';
+  document.getElementById('listGroupMemberSearchResults').innerHTML = '';
+  document.getElementById('listGroupMemberSearchResults').classList.add('hidden');
+  document.getElementById('groupChatStatus').innerText = '';
+  renderSelectedGroupMembers();
+  document.getElementById('groupChatModal').classList.remove('hidden');
+  document.getElementById('inputGroupName').focus();
+  refreshIcons();
+}
+
+function closeGroupChatModal() {
+  document.getElementById('groupChatModal').classList.add('hidden');
+}
+
+async function createGroupChat() {
+  const name = document.getElementById('inputGroupName').value.trim();
+  const statusEl = document.getElementById('groupChatStatus');
+  if (!name) {
+    statusEl.innerText = 'Vui lòng nhập tên nhóm';
+    document.getElementById('inputGroupName').focus();
+    return;
+  }
+  if (!STATE.groupSelectedMembers.length) {
+    statusEl.innerText = 'Hãy chọn ít nhất một thành viên';
+    return;
+  }
+  statusEl.innerText = 'Đang tạo nhóm...';
+  try {
+    const res = await apiRequest('/chat/conversations', 'POST', {
+      name,
+      memberIds: STATE.groupSelectedMembers.map((member) => member.userId),
+    });
+    closeGroupChatModal();
+    await loadConversations();
+    showToast('✅ Đã tạo nhóm chat thành công', 'success');
+    openChatConversation(res.data);
+  } catch (err) {
+    statusEl.innerText = err.message;
   }
 }
 
@@ -1119,21 +1307,29 @@ async function loadConversations() {
 
     listEl.innerHTML = '';
     res.data.forEach((c) => {
-      if (!c.partner) return;
-      const item = document.createElement('div');
-      item.className =
-        'p-2.5 rounded-xl bg-slate-800/40 hover:bg-slate-800 border border-slate-700/50 cursor-pointer flex items-center justify-between transition';
+      const isGroup = c.type === 'group';
+      if (!isGroup && !c.partner) return;
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'w-full text-left p-2.5 min-h-16 rounded-xl bg-slate-800/40 hover:bg-slate-800 border border-slate-700/50 cursor-pointer flex items-center justify-between transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400';
+      const title = isGroup ? (c.name || 'Nhóm chat Only') : c.partner.fullName;
+      const subtitle = isGroup
+        ? `${c.memberCount || c.members?.length || 0} thành viên${c.lastMessage?.content ? ` · ${c.lastMessage.content}` : ''}`
+        : (c.lastMessage?.content || '[Hình ảnh]');
+      const avatar = isGroup
+        ? 'https://api.dicebear.com/7.x/shapes/svg?seed=' + c.conversationId
+        : (c.partner.avatarUrl || 'https://api.dicebear.com/7.x/bottts/svg?seed=' + c.partner.userId);
       item.innerHTML = `
         <div class="flex items-center gap-2.5 overflow-hidden">
-          <img src="${c.partner.avatarUrl}" class="w-10 h-10 rounded-full object-cover shrink-0">
+          <img src="${avatar}" alt="${title}" class="w-10 h-10 rounded-full object-cover shrink-0">
           <div class="overflow-hidden">
-            <h4 class="font-bold text-xs text-slate-200 truncate">${c.partner.fullName}</h4>
-            <p class="text-[10px] text-slate-400 truncate">${c.lastMessage?.content || '[Hình ảnh]'}</p>
+            <h4 class="font-bold text-xs text-slate-200 truncate">${title}</h4>
+            <p class="text-[10px] text-slate-400 truncate">${subtitle}</p>
           </div>
         </div>
         ${c.unreadCount > 0 ? `<span class="px-1.5 py-0.5 text-[9px] bg-emerald-500 text-slate-950 font-bold rounded-full">${c.unreadCount}</span>` : ''}
       `;
-      item.onclick = () => openChatWithUser(c.partner);
+      item.onclick = () => isGroup ? openChatConversation(c) : openChatWithUser(c.partner);
       listEl.appendChild(item);
     });
   } catch (err) {
@@ -1470,6 +1666,7 @@ function switchTab(tabKey) {
 
   const tabDefs = [
     { key: 'radar', desktopBtn: 'tabRadar', mobileBtn: 'mobileTabRadar', panel: 'panelRadar' },
+    { key: 'ride', desktopBtn: 'tabRide', mobileBtn: 'mobileTabRide', panel: 'panelRide' },
     { key: 'feed', desktopBtn: 'tabFeed', mobileBtn: 'mobileTabFeed', panel: 'panelFeed' },
     { key: 'messages', desktopBtn: 'tabMessages', mobileBtn: 'mobileTabMessages', panel: 'panelMessages' },
     { key: 'friends', desktopBtn: 'tabFriends', mobileBtn: 'mobileTabFriends', panel: 'panelFriends' },
@@ -1556,13 +1753,40 @@ function switchTab(tabKey) {
 function setupEventListeners() {
   // Bắt sự kiện 5 Tab Desktop
   document.getElementById('tabRadar').onclick = () => switchTab('radar');
+  document.getElementById('tabRide')?.addEventListener('click', () => switchTab('ride'));
   document.getElementById('tabFeed').onclick = () => switchTab('feed');
   document.getElementById('tabMessages').onclick = () => switchTab('messages');
   document.getElementById('tabFriends').onclick = () => switchTab('friends');
   document.getElementById('tabSettings').onclick = () => switchTab('settings');
 
+  // Tìm người và tạo nhóm chat
+  const userSearchForm = document.getElementById('formUserSearch');
+  if (userSearchForm) {
+    userSearchForm.onsubmit = (event) => {
+      event.preventDefault();
+      searchUsersForChat(document.getElementById('inputUserSearch').value, 'general');
+    };
+  }
+  const groupMemberSearchForm = document.getElementById('formGroupMemberSearch');
+  if (groupMemberSearchForm) {
+    groupMemberSearchForm.onsubmit = (event) => {
+      event.preventDefault();
+      searchUsersForChat(document.getElementById('inputGroupMemberSearch').value, 'group');
+    };
+  }
+  const openGroupBtn = document.getElementById('btnOpenGroupChatModal');
+  const closeGroupBtn = document.getElementById('btnCloseGroupChatModal');
+  const createGroupBtn = document.getElementById('btnCreateGroup');
+  if (openGroupBtn) openGroupBtn.onclick = openGroupChatModal;
+  if (closeGroupBtn) closeGroupBtn.onclick = closeGroupChatModal;
+  if (createGroupBtn) createGroupBtn.onclick = createGroupChat;
+  document.getElementById('groupChatModal')?.addEventListener('click', (event) => {
+    if (event.target.id === 'groupChatModal') closeGroupChatModal();
+  });
+
   // Bắt sự kiện 5 Tab Mobile Bottom Navigation Bar
   document.getElementById('mobileTabRadar').onclick = () => switchTab('radar');
+  document.getElementById('mobileTabRide')?.onclick = () => switchTab('ride');
   document.getElementById('mobileTabFeed').onclick = () => switchTab('feed');
   document.getElementById('mobileTabMessages').onclick = () => switchTab('messages');
   document.getElementById('mobileTabFriends').onclick = () => switchTab('friends');
@@ -1813,6 +2037,22 @@ function setupEventListeners() {
     document.getElementById('formLogin').classList.add('hidden');
   };
 
+  // GIAI ĐOẠN 4: ONLY RIDE EVENT LISTENERS
+  const driverToggle = document.getElementById('driverEarningToggle');
+  if (driverToggle) {
+    driverToggle.onchange = (e) => toggleDriverEarningMode(e.target.checked);
+  }
+
+  const btnFindRides = document.getElementById('btnFindRides');
+  if (btnFindRides) {
+    btnFindRides.onclick = handleCreateRideRequest;
+  }
+
+  const btnCancelRide = document.getElementById('btnCancelActiveRide');
+  if (btnCancelRide) {
+    btnCancelRide.onclick = handleCancelActiveRide;
+  }
+
   document.getElementById('formLogin').onsubmit = async (e) => {
     e.preventDefault();
     const id = document.getElementById('loginIdentifier').value;
@@ -1897,6 +2137,190 @@ function openAuthModal(tab = 'register') {
 
 function closeAuthModal() {
   document.getElementById('authModal').classList.add('hidden');
+}
+
+// ==============================================================================
+// GIAI ĐOẠN 4: ONLY RIDE - KẾT NỐI ĐI LẠI & TIỆN CHUYẾN CỘNG ĐỒNG
+// ==============================================================================
+
+// Toggle Driver Earning Mode (Bật/Tắt Chế độ Kiếm Tiền)
+async function toggleDriverEarningMode(isActive) {
+  try {
+    const vehicleType = document.getElementById('driverVehicleType')?.value || 'motorbike';
+    const vehiclePlate = document.getElementById('driverVehiclePlate')?.value || '';
+    
+    const res = await apiRequest('/rides/earning-mode', 'POST', {
+      isActive,
+      vehicleType,
+      licensePlate: vehiclePlate,
+    });
+
+    STATE.driverEarningMode = isActive;
+    
+    const configBox = document.getElementById('driverConfigBox');
+    if (isActive) {
+      configBox.classList.remove('hidden');
+      configBox.classList.add('flex');
+      showToast('🟢 Đã bật Chế độ Kiếm Tiền! Bạn sẽ nhận chuông khi có cuốc xe quanh đây.', 'success');
+    } else {
+      configBox.classList.add('hidden');
+      showToast('Đã tắt Chế độ Kiếm Tiền', 'info');
+    }
+  } catch (err) {
+    showToast(err.message, 'error');
+    document.getElementById('driverEarningToggle').checked = false;
+  }
+}
+
+// Tạo yêu cầu di chuyển / Đặt cuốc xe
+async function handleCreateRideRequest() {
+  try {
+    if (!STATE.token) {
+      showToast('Vui lòng đăng nhập để sử dụng tính năng Đi Lại', 'error');
+      return;
+    }
+
+    const pickupInput = document.getElementById('inputRidePickup').value.trim();
+    const dropoffInput = document.getElementById('inputRideDropoff').value.trim();
+    const vehicleType = document.getElementById('selectRideVehicle').value;
+    const suggestedPrice = parseInt(document.getElementById('inputRidePrice').value, 10) || 0;
+
+    if (!dropoffInput) {
+      showToast('Vui lòng nhập điểm đến', 'error');
+      return;
+    }
+
+    const pickupLat = STATE.ridePickupCoords?.lat || STATE.currentLat;
+    const pickupLon = STATE.ridePickupCoords?.lon || STATE.currentLon;
+    const pickupName = pickupInput || 'Vị trí hiện tại của tôi';
+
+    // Giả sử dropoff được nhập thủ công, sử dụng toạ độ mẫu cách 3km
+    const dropoffLat = STATE.rideDropoffCoords?.lat || (STATE.currentLat + 0.027);
+    const dropoffLon = STATE.rideDropoffCoords?.lon || (STATE.currentLon + 0.027);
+    const dropoffName = dropoffInput;
+
+    const res = await apiRequest('/rides/request', 'POST', {
+      pickupName,
+      pickupLat,
+      pickupLon,
+      dropoffName,
+      dropoffLat,
+      dropoffLon,
+      vehicleType,
+      suggestedPrice,
+    });
+
+    STATE.activeRide = res.data;
+    showToast('🛵 Đã phát tín hiệu tìm xe! Đang quét tài xế quanh đây...', 'success');
+    renderActiveRide();
+    pollRideOffers();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+// Hiển thị UI cuốc xe đang hoạt động
+function renderActiveRide() {
+  const container = document.getElementById('activeRideContainer');
+  if (!STATE.activeRide) {
+    container.classList.add('hidden');
+    return;
+  }
+
+  container.classList.remove('hidden');
+  const statusText = document.getElementById('activeRideStatusText');
+  const detailText = document.getElementById('activeRideDetailText');
+
+  if (STATE.activeRide.status === 'searching') {
+    statusText.innerText = 'Đang tìm xe quanh đây...';
+    detailText.innerText = `${STATE.activeRide.pickupName} → ${STATE.activeRide.dropoffName} (~${STATE.activeRide.distanceKm}km)`;
+  } else if (STATE.activeRide.status === 'negotiating') {
+    statusText.innerText = `Có ${STATE.activeRide.offersCount} tài xế gửi báo giá!`;
+    detailText.innerText = 'Chọn tài xế ưng ý nhất để chốt chuyến';
+  } else if (STATE.activeRide.status === 'accepted') {
+    statusText.innerText = '🎉 Đã chốt tài xế! Đang đến đón bạn...';
+    detailText.innerText = `Tài xế: ${STATE.activeRide.driver?.fullName} - ${STATE.activeRide.driver?.licensePlate}`;
+  }
+}
+
+// Poll danh sách báo giá từ tài xế
+async function pollRideOffers() {
+  if (!STATE.activeRide || STATE.activeRide.status === 'accepted') return;
+
+  try {
+    const res = await apiRequest(`/rides/${STATE.activeRide.id}/offers`, 'GET');
+    STATE.rideOffers = res.data || [];
+    renderRideOffers();
+
+    // Tiếp tục poll mỗi 3 giây
+    setTimeout(pollRideOffers, 3000);
+  } catch (err) {
+    console.error('Lỗi khi poll ride offers:', err);
+  }
+}
+
+// Render danh sách tài xế báo giá
+function renderRideOffers() {
+  const listEl = document.getElementById('listDriverOffers');
+  if (!STATE.rideOffers || STATE.rideOffers.length === 0) {
+    listEl.innerHTML = '<div class="text-center py-6 text-xs text-slate-500">Đang chờ tài xế gửi đề xuất giá...</div>';
+    return;
+  }
+
+  listEl.innerHTML = '';
+  STATE.rideOffers.forEach((offer) => {
+    const card = document.createElement('div');
+    card.className = 'bg-slate-800/80 border border-slate-700 p-2.5 rounded-xl flex items-center justify-between hover:border-amber-500 transition cursor-pointer';
+    card.innerHTML = `
+      <div class="flex items-center gap-2">
+        <img src="${offer.driver.avatarUrl || 'https://api.dicebear.com/7.x/bottts/svg?seed=' + offer.driverId}" class="w-10 h-10 rounded-full border border-slate-600">
+        <div>
+          <h5 class="text-xs font-bold text-slate-100">${offer.driver.fullName}</h5>
+          <p class="text-[10px] text-slate-400">${offer.driver.vehicleBrand} - ${offer.driver.licensePlate}</p>
+          <p class="text-[10px] text-amber-400">⭐ ${offer.driver.ratingAvg} (${offer.driver.totalTrips} chuyến)</p>
+        </div>
+      </div>
+      <div class="text-right">
+        <p class="text-sm font-bold text-emerald-400">${offer.offeredPrice.toLocaleString('vi-VN')}đ</p>
+        <p class="text-[10px] text-slate-400">~${offer.estimatedPickupMins} phút</p>
+      </div>
+    `;
+    card.onclick = () => confirmDriverOffer(offer);
+    listEl.appendChild(card);
+  });
+}
+
+// Chốt chọn tài xế
+async function confirmDriverOffer(offer) {
+  const confirmed = confirm(`Chốt tài xế ${offer.driver.fullName} với giá ${offer.offeredPrice.toLocaleString('vi-VN')}đ?\n\nChuyến đi sẽ tự động được kích hoạt Bảo hiểm tai nạn BIC/Bảo Việt.`);
+  if (!confirmed) return;
+
+  try {
+    const res = await apiRequest(`/rides/${STATE.activeRide.id}/accept-offer/${offer.id}`, 'POST');
+    STATE.activeRide = res.data;
+    showToast('🎉 Chốt chuyến thành công! Tài xế đang di chuyển tới đón bạn.', 'success');
+    renderActiveRide();
+    document.getElementById('listDriverOffers').innerHTML = '<div class="text-center py-4 text-xs text-emerald-400">✅ Đã chốt tài xế. Đang di chuyển tới đón bạn...</div>';
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+// Huỷ cuốc xe
+async function handleCancelActiveRide() {
+  if (!STATE.activeRide) return;
+  const confirmed = confirm('Bạn có chắc muốn huỷ chuyến đi này?');
+  if (!confirmed) return;
+
+  try {
+    await apiRequest(`/rides/${STATE.activeRide.id}/status`, 'POST', { status: 'cancelled' });
+    STATE.activeRide = null;
+    STATE.rideOffers = [];
+    showToast('Đã huỷ chuyến đi', 'info');
+    document.getElementById('activeRideContainer').classList.add('hidden');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
 }
 
 window.addEventListener('DOMContentLoaded', initApp);

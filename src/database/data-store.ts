@@ -16,6 +16,11 @@ import {
   AppNotification,
   CallLog,
   CallSession,
+  DriverProfile,
+  DriverEarningMode,
+  RideRequest,
+  RideOffer,
+  UserSearchResult,
 } from '../types';
 import { fuzzLocation } from '../utils/geo';
 
@@ -44,6 +49,12 @@ class DataStore {
   // Giai đoạn 3: Cuộc gọi WebRTC, Nhật ký gọi điện
   public callLogs = new Map<string, CallLog>();
   public activeCalls = new Map<string, CallSession>();
+
+  // Giai đoạn 4: Only Ride - Đi lại, Tiện chuyến, Bật kiếm tiền
+  public driverProfiles = new Map<string, DriverProfile>();
+  public driverEarningModes = new Map<string, DriverEarningMode>();
+  public rideRequests = new Map<string, RideRequest>();
+  public rideOffers = new Map<string, RideOffer>();
 
   constructor() {
     this.seedInitialData();
@@ -267,6 +278,50 @@ class DataStore {
       content: 'Cho mình xin tên quán với Lan Anh ơi 🥰',
       createdAt: new Date(Date.now() - 3600000 * 1.2),
     });
+
+    // 7. Khởi tạo dữ liệu mẫu cho Only Ride (Người có xe đang bật chế độ kiếm tiền)
+    // Minh Tuấn: có xe máy Honda SH, đang bật kiếm tiền rảnh rỗi quanh Hồ Gươm
+    this.driverProfiles.set('user-sample-02', {
+      userId: 'user-sample-02',
+      vehicleType: 'motorbike',
+      vehicleBrand: 'Honda SH 150i',
+      licensePlate: '29B1-888.88',
+      vehicleColor: 'Trắng',
+      ratingAvg: 4.9,
+      totalTrips: 38,
+      isVerified: true,
+    });
+    this.driverEarningModes.set('user-sample-02', {
+      userId: 'user-sample-02',
+      isActive: true,
+      vehicleType: 'motorbike',
+      status: 'idle',
+      lastPingAt: new Date(),
+    });
+
+    // Hoàng Việt: có ô tô VinFast VF5, đang bật kiếm tiền tiện chuyến
+    this.driverProfiles.set('user-sample-04', {
+      userId: 'user-sample-04',
+      vehicleType: 'car_4seats',
+      vehicleBrand: 'VinFast VF5 Plus',
+      licensePlate: '30K-999.68',
+      vehicleColor: 'Xanh dương',
+      ratingAvg: 5.0,
+      totalTrips: 15,
+      isVerified: true,
+    });
+    this.driverEarningModes.set('user-sample-04', {
+      userId: 'user-sample-04',
+      isActive: true,
+      vehicleType: 'car_4seats',
+      status: 'idle',
+      destinationFilter: {
+        name: 'Cầu Giấy, Hà Nội',
+        lat: baseLat + 0.02,
+        lon: baseLon - 0.03,
+      },
+      lastPingAt: new Date(),
+    });
   }
 
   // Tiện ích tìm user qua SĐT hoặc Email
@@ -304,6 +359,41 @@ class DataStore {
       }
     }
     return undefined;
+  }
+
+  /** Search active users by exact phone, phone suffix, or name/nickname. */
+  public searchUsers(viewerId: string, query: string, limit = 20): UserSearchResult[] {
+    const normalizedQuery = query.trim().toLocaleLowerCase('vi-VN');
+    if (!normalizedQuery) return [];
+
+    const results: UserSearchResult[] = [];
+    for (const user of this.users.values()) {
+      if (user.id === viewerId || user.status !== 'active' || this.isBlocked(viewerId, user.id)) continue;
+      const profile = this.profiles.get(user.id);
+      if (!profile) continue;
+
+      const name = profile.fullName.toLocaleLowerCase('vi-VN');
+      const nickname = (profile.nickname || '').toLocaleLowerCase('vi-VN');
+      const phone = (user.phone || '').toLowerCase();
+      const email = (user.email || '').toLowerCase();
+      const matches = name.includes(normalizedQuery) || nickname.includes(normalizedQuery) || phone.includes(normalizedQuery) || email.includes(normalizedQuery);
+      if (!matches) continue;
+
+      const friendship = this.getFriendship(viewerId, user.id);
+      results.push({
+        userId: user.id,
+        fullName: profile.fullName,
+        nickname: profile.nickname,
+        avatarUrl: profile.avatarUrl,
+        phoneMasked: user.phone ? `${user.phone.slice(0, 3)}****${user.phone.slice(-2)}` : undefined,
+        friendshipStatus: friendship?.status || 'none',
+        isFriend: friendship?.status === 'accepted',
+      });
+    }
+
+    return results
+      .sort((a, b) => a.fullName.localeCompare(b.fullName, 'vi'))
+      .slice(0, Math.max(1, Math.min(limit, 50)));
   }
 
   // Tìm cuộc trò chuyện 1-1 giữa 2 người

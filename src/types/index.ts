@@ -96,8 +96,35 @@ export interface Conversation {
   id: string;
   type: 'direct' | 'group';
   memberIds: string[];
+  name?: string;
+  createdBy?: string;
+  adminIds?: string[];
   lastMessageAt?: Date;
   createdAt: Date;
+}
+
+export interface UserSearchResult {
+  userId: string;
+  fullName: string;
+  nickname?: string;
+  avatarUrl?: string;
+  phoneMasked?: string;
+  friendshipStatus: 'none' | 'pending' | 'accepted' | 'declined';
+  isFriend: boolean;
+}
+
+export interface GroupConversationDTO {
+  conversationId: string;
+  type: 'group';
+  name: string;
+  memberCount: number;
+  members: Array<{
+    userId: string;
+    fullName: string;
+    avatarUrl?: string;
+  }>;
+  createdBy: string;
+  updatedAt: Date;
 }
 
 export interface Message {
@@ -215,5 +242,88 @@ export interface CallSession {
   startedAt?: Date;
   createdAt: Date;
 }
+
+// ------------------------------------------------------------------------------
+// GIAI ĐOẠN 4: ONLY RIDE - KẾT NỐI ĐI LẠI & TIỆN CHUYẾN CỘNG ĐỒNG
+// ------------------------------------------------------------------------------
+
+export interface DriverProfile {
+  userId: string;
+  vehicleType: 'motorbike' | 'car_4seats' | 'car_7seats';
+  vehicleBrand: string; // VD: Honda Vision, VinFast VF5
+  licensePlate: string; // VD: 29A-123.45
+  vehicleColor?: string;
+  ratingAvg: number;
+  totalTrips: number;
+  isVerified: boolean;
+}
+
+export interface DriverEarningMode {
+  userId: string;
+  isActive: boolean; // Đang bật chế độ kiếm tiền hay tắt
+  vehicleType: 'motorbike' | 'car_4seats' | 'car_7seats';
+  status: 'idle' | 'busy'; // Rảnh rỗi hoặc đang chở khách
+  destinationFilter?: {
+    name: string;
+    lat: number;
+    lon: number;
+  };
+  lastPingAt: Date;
+}
+
+export interface RideRequest {
+  id: string;
+  passengerId: string;
+  driverId?: string; // Gán sau khi chốt tài xế
+  pickupName: string;
+  pickupLat: number;
+  pickupLon: number;
+  dropoffName: string;
+  dropoffLat: number;
+  dropoffLon: number;
+  distanceKm: number;
+  estimatedMins: number;
+  vehicleType: 'motorbike' | 'car_4seats' | 'car_7seats';
+  passengerNote?: string;
+  suggestedPrice: number; // Giá khách đề xuất ban đầu (VNĐ)
+  agreedPrice?: number; // Giá cuối cùng chốt thoả thuận (VNĐ)
+  status: 'searching' | 'negotiating' | 'accepted' | 'picking_up' | 'in_trip' | 'completed' | 'cancelled';
+  cancelledBy?: 'passenger' | 'driver' | 'timeout';
+  insurancePolicyId?: string; // Mã hợp đồng bảo hiểm tai nạn nhúng (Embedded Insurance)
+  createdAt: Date;
+  completedAt?: Date;
+}
+
+export interface RideOffer {
+  id: string;
+  rideId: string;
+  driverId: string;
+  offeredPrice: number; // Giá tài xế đưa ra
+  estimatedPickupMins: number; // Dự kiến bao nhiêu phút đến đón
+  note?: string;
+  status: 'pending' | 'accepted' | 'rejected';
+  createdAt: Date;
+}
+
+export interface RideDTO extends RideRequest {
+  passenger: {
+    userId: string;
+    fullName: string;
+    avatarUrl?: string;
+    phone?: string;
+  };
+  driver?: {
+    userId: string;
+    fullName: string;
+    avatarUrl?: string;
+    phone?: string;
+    vehicleType: string;
+    vehicleBrand: string;
+    licensePlate: string;
+    ratingAvg: number;
+  };
+  offersCount: number;
+}
+
 
 

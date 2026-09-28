@@ -98,32 +98,43 @@ export function setupSocketGateway(io: Server) {
       }
     });
 
-    // 3. GỬI TIN NHẮN 1-1 THỜI GIAN THỰC
+    // 3. GỬI TIN NHẮN 1-1 HOẶC NHÓM THỜI GIAN THỰC
     socket.on('chat:send', (data: {
-      receiverId: string;
+      receiverId?: string;
+      conversationId?: string;
       content?: string;
       mediaUrl?: string;
-      type?: 'text' | 'image' | 'emoji';
+      type?: 'text' | 'image' | 'emoji' | 'location_pin';
     }) => {
       try {
-        const { conversation, message } = ChatService.sendMessage(
-          userId,
-          data.receiverId,
-          {
-            content: data.content,
-            mediaUrl: data.mediaUrl,
-            type: data.type,
-          }
-        );
+        if (!data.receiverId && !data.conversationId) {
+          throw new Error('Vui lòng cung cấp receiverId hoặc conversationId');
+        }
 
-        // Báo cho chính người gửi (xác nhận đã gửi)
+        const result = data.conversationId
+          ? ChatService.sendMessageToConversation(userId, data.conversationId, {
+              content: data.content,
+              mediaUrl: data.mediaUrl,
+              type: data.type,
+            })
+          : ChatService.sendMessage(userId, data.receiverId as string, {
+              content: data.content,
+              mediaUrl: data.mediaUrl,
+              type: data.type,
+            });
+
+        const { conversation, message } = result;
         socket.emit('chat:sent_success', { conversation, message });
 
-        // Gửi tới phòng của người nhận nếu đang online
-        io.to(`user:${data.receiverId}`).emit('chat:receive_message', {
-          conversation,
-          message,
-          senderProfile: db.profiles.get(userId),
+        const recipients = data.conversationId
+          ? conversation.memberIds.filter((memberId) => memberId !== userId)
+          : [data.receiverId as string];
+        recipients.forEach((recipientId) => {
+          io.to(`user:${recipientId}`).emit('chat:receive_message', {
+            conversation,
+            message,
+            senderProfile: db.profiles.get(userId),
+          });
         });
       } catch (err: any) {
         socket.emit('chat:error', { message: err.message });
@@ -227,6 +238,27 @@ export function setupSocketGateway(io: Server) {
         sessionId: data.sessionId,
         senderId: userId,
         signalData: data.signalData,
+      });
+    });
+
+    // 7. GIAI ĐOẠN 4: ONLY RIDE - KẾT NỐI ĐI LẠI & THỎA THUẬN GIÁ REALTIME
+    // Tài xế cập nhật vị trí GPS khi đang di chuyển tới đón khách
+    socket.on('ride:driver_loc', (data: { rideId: string; lat: number; lon: number }) => {
+      const ride = db.rideRequests.get(data.rideId);
+      if (ride && ride.driverId === userId) {
+        io.to(`user:${ride.passengerId}`).emit('ride:driver_moved', {
+          rideId: data.rideId,
+          lat: data.lat,
+          lon: data.lon,
+        });
+      }
+    });
+
+    // Thông báo sự kiện cuốc xe thời gian thực
+    socket.on('ride:notify_passenger', (data: { rideId: string; passengerId: string; message: string }) => {
+      io.to(`user:${data.passengerId}`).emit('ride:alert', {
+        rideId: data.rideId,
+        message: data.message,
       });
     });
 

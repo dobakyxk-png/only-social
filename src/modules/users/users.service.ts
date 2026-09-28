@@ -4,6 +4,22 @@ import { calculateAge, calculateDistance } from '../../utils/geo';
 
 export class UsersService {
   /**
+   * Tìm người dùng theo tên, biệt danh hoặc số điện thoại.
+   * Chỉ trả về dữ liệu hồ sơ an toàn, không lộ email/passwordHash.
+   */
+  static searchUsers(viewerId: string, query: string, limit = 20) {
+    const normalizedQuery = query?.trim();
+    if (!normalizedQuery) {
+      throw new Error('Vui lòng nhập tên hoặc số điện thoại để tìm kiếm');
+    }
+    if (normalizedQuery.length < 2) {
+      throw new Error('Vui lòng nhập ít nhất 2 ký tự');
+    }
+
+    return db.searchUsers(viewerId, normalizedQuery, limit);
+  }
+
+  /**
    * Cập nhật hồ sơ cá nhân
    */
   static updateProfile(userId: string, updateData: Partial<UserProfile>) {
