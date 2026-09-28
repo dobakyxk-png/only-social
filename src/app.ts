@@ -44,7 +44,7 @@ app.get('/', (_req: Request, res: Response) => {
 app.get('/api/config/public.js', (_req: Request, res: Response) => {
   const rawToken = String(CONFIG.MAPBOX_ACCESS_TOKEN || '').trim();
   const rawStyle = String(CONFIG.MAPBOX_STYLE || '').trim();
-  const mapboxToken = rawToken.startsWith('pk.eyJ') && rawToken.length > 80 ? rawToken : '';
+  const mapboxToken = /^pk\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(rawToken) ? rawToken : '';
   const mapboxStyle = rawStyle.includes('mapbox://styles/') ? rawStyle : 'mapbox://styles/mapbox/streets-v12';
   res.type('application/javascript').send(`window.ONLY_PUBLIC_CONFIG=${JSON.stringify({ mapboxToken, mapboxStyle })};`);
 });
