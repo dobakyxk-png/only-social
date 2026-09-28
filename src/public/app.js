@@ -120,51 +120,40 @@ async function initApp() {
 // 2. KHỞI TẠO BẢN ĐỒ GOOGLE MAPS & SATELLITE (MIỄN PHÍ)
 // ------------------------------------------------------------------------------
 function initMap() {
-  STATE.map = L.map('map', {
-    zoomControl: false,
-    attributionControl: false,
-  }).setView([STATE.currentLat, STATE.currentLon], 14);
+  const mapboxToken = window.ONLY_PUBLIC_CONFIG?.mapboxToken;
+  if (window.mapboxgl && mapboxToken) {
+    mapboxgl.accessToken = mapboxToken;
+    const mapboxMap = new mapboxgl.Map({
+      container: 'mapboxMap',
+      style: window.ONLY_PUBLIC_CONFIG.mapboxStyle || 'mapbox://styles/mapbox/streets-v12',
+      center: [STATE.currentLon, STATE.currentLat],
+      zoom: 13,
+      attributionControl: true,
+    });
+    mapboxMap.addControl(new mapboxgl.NavigationControl(), 'bottom-right');
+    STATE.mapboxMap = mapboxMap;
+    mapboxMap.on('load', () => {
+      document.getElementById('mapboxStatus')?.classList.add('hidden');
+      renderRideMapbox();
+    });
+    mapboxMap.on('click', (event) => {
+      if (STATE.ridePickMode) {
+        setRideEndpoint(STATE.ridePickMode, event.lngLat.lat, event.lngLat.lng);
+        STATE.ridePickMode = null;
+        mapboxMap.getCanvas().style.cursor = '';
+      }
+    });
+  } else {
+    const status = document.getElementById('mapboxStatus');
+    if (status) { status.textContent = 'Mapbox chưa cấu hình token — đang dùng bản đồ dự phòng.'; status.classList.remove('hidden'); }
+  }
 
-  // 1. Google Maps Đường Phố Tiếng Việt chuẩn xác (Roadmap)
-  const googleRoadmap = L.tileLayer('https://mt1.google.com/vt/lyrs=m&hl=vi&gl=vn&x={x}&y={y}&z={z}', {
-    maxZoom: 20,
-    subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
-  });
-
-  // 2. Google Maps Vệ Tinh (Satellite Hybrid kết hợp đường phố)
-  const googleSatellite = L.tileLayer('https://mt1.google.com/vt/lyrs=y&hl=vi&gl=vn&x={x}&y={y}&z={z}', {
-    maxZoom: 20,
-    subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
-  });
-
-  // 3. OpenStreetMap
-  const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19,
-  });
-
-  // Mặc định kích hoạt Google Maps Đường Phố quen thuộc
-  googleRoadmap.addTo(STATE.map);
-
-  // Hộp chọn chuyển đổi nhanh giữa Google Maps và Vệ Tinh ở góc dưới
-  L.control.layers({
-    '🗺️ Google Maps': googleRoadmap,
-    '🛰️ Google Vệ Tinh': googleSatellite,
-    '🌐 OpenStreetMap': osm,
-  }, null, { position: 'bottomleft' }).addTo(STATE.map);
-
-  // Zoom control góc dưới bên phải
+  STATE.map = L.map('map', { zoomControl: false, attributionControl: false }).setView([STATE.currentLat, STATE.currentLon], 14);
+  const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 });
+  osm.addTo(STATE.map);
   L.control.zoom({ position: 'bottomright' }).addTo(STATE.map);
-
-  // Marker toả sóng biểu thị vị trí người dùng
-  const userIcon = L.divIcon({
-    className: 'user-radar-container',
-    html: `<div class="user-radar-pulse"><div class="ring"></div><div class="dot"></div></div>`,
-    iconSize: [24, 24],
-    iconAnchor: [12, 12],
-  });
-
+  const userIcon = L.divIcon({ className: 'user-radar-container', html: `<div class="user-radar-pulse"><div class="ring"></div><div class="dot"></div></div>`, iconSize: [24, 24], iconAnchor: [12, 12] });
   STATE.userMarker = L.marker([STATE.currentLat, STATE.currentLon], { icon: userIcon }).addTo(STATE.map);
-
   STATE.map.on('click', (event) => {
     if (STATE.ridePickMode) {
       setRideEndpoint(STATE.ridePickMode, event.latlng.lat, event.latlng.lng);
@@ -172,22 +161,42 @@ function initMap() {
       STATE.map.getContainer().classList.remove('ride-map-picking');
     }
   });
-
-  // Vòng tròn thể hiện bán kính quét Radar
-  STATE.radarCircle = L.circle([STATE.currentLat, STATE.currentLon], {
-    radius: STATE.radiusMeters,
-    color: '#10b981',
-    fillColor: '#10b981',
-    fillOpacity: 0.08,
-    weight: 1.5,
-    dashArray: '4, 8',
-  }).addTo(STATE.map);
-
-  // Đảm bảo map tự động căn chỉnh kích thước màn hình
-  setTimeout(() => {
-    STATE.map.invalidateSize();
-  }, 400);
+  STATE.radarCircle = L.circle([STATE.currentLat, STATE.currentLon], { radius: STATE.radiusMeters, color: '#3CACFD', fillColor: '#3CACFD', fillOpacity: 0.08, weight: 1.5, dashArray: '4, 8' }).addTo(STATE.map);
+  setTimeout(() => STATE.map.invalidateSize(), 400);
 }
+
+function renderRideMapbox() {
+  const map = STATE.mapboxMap;
+  if (!map || !map.isStyleLoaded()) return;
+  const features = [];
+  if (STATE.ridePickupCoords) features.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [STATE.ridePickupCoords.lon, STATE.ridePickupCoords.lat] }, properties: { color: '#3CACFD' } });
+  if (STATE.rideDropoffCoords) features.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [STATE.rideDropoffCoords.lon, STATE.rideDropoffCoords.lat] }, properties: { color: '#ED0309' } });
+  if (STATE.activeRide?.driverLat && STATE.activeRide?.driverLon) features.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [STATE.activeRide.driverLon, STATE.activeRide.driverLat] }, properties: { color: '#ED0309' } });
+  const sourceId = 'only-ride-points';
+  if (map.getSource(sourceId)) map.getSource(sourceId).setData({ type: 'FeatureCollection', features });
+  else {
+    map.addSource(sourceId, { type: 'geojson', data: { type: 'FeatureCollection', features } });
+    map.addLayer({ id: 'only-ride-points', type: 'circle', source: sourceId, paint: { 'circle-radius': 8, 'circle-color': ['get', 'color'], 'circle-stroke-color': '#fff', 'circle-stroke-width': 2 } });
+  }
+}
+
+function openDirectionsForSelectedUser(user) {
+  if (!STATE.token || !user?.userId) return;
+  const status = document.getElementById('selectedUserRouteStatus');
+  if (status) status.textContent = 'Đang tính tuyến đường bằng Mapbox Directions...';
+  apiRequest(`/routing/users/${encodeURIComponent(user.userId)}/directions`)
+    .then(({ data }) => {
+      const route = data.route;
+      document.getElementById('selectedUserRouteMetrics').textContent = `${(route.distanceMeters / 1000).toFixed(1)} km · khoảng ${Math.round(route.durationSeconds / 60)} phút`;
+      if (status) status.textContent = `Tuyến Mapbox · ${route.provider}`;
+      if (STATE.mapboxMap && route.geometry?.length) {
+        if (STATE.mapboxMap.getSource('only-directions')) STATE.mapboxMap.getSource('only-directions').setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: route.geometry.map(([lat, lon]) => [lon, lat]) } });
+        else { STATE.mapboxMap.addSource('only-directions', { type: 'geojson', data: { type: 'Feature', geometry: { type: 'LineString', coordinates: route.geometry.map(([lat, lon]) => [lon, lat]) } } }); STATE.mapboxMap.addLayer({ id: 'only-directions-line', type: 'line', source: 'only-directions', paint: { 'line-color': '#ED0309', 'line-width': 5, 'line-opacity': .85 } }); }
+      }
+    })
+    .catch((err) => { if (status) status.textContent = err.message; });
+}
+
 
 // ------------------------------------------------------------------------------
 // 3. ĐỊNH VỊ GPS VÀ PING TOẠ ĐỘ
@@ -227,6 +236,7 @@ function updateMapPosition() {
     STATE.radarCircle.setLatLng([STATE.currentLat, STATE.currentLon]);
     STATE.map.panTo([STATE.currentLat, STATE.currentLon]);
   }
+  if (STATE.mapboxMap) STATE.mapboxMap.setCenter([STATE.currentLon, STATE.currentLat]);
 }
 
 async function sendLocationPing() {
@@ -309,7 +319,22 @@ async function loadNearbyUsers() {
           <span class="text-[9px] text-slate-500 font-mono">Đã làm mờ</span>
         </div>
       `;
-      card.onclick = () => openUserPopup(user);
+      card.onclick = () => {
+      STATE.selectedRouteUser = user;
+      const routeCard = document.getElementById('selectedUserRouteCard');
+      if (routeCard) routeCard.classList.remove('hidden');
+      const avatar = document.getElementById('selectedUserRouteAvatar');
+      if (avatar) { avatar.src = user.avatarUrl || 'https://api.dicebear.com/7.x/bottts/svg?seed=' + user.userId; avatar.alt = user.fullName; }
+      const name = document.getElementById('selectedUserRouteName');
+      if (name) name.textContent = user.fullName;
+      const metrics = document.getElementById('selectedUserRouteMetrics');
+      if (metrics) metrics.textContent = `Cách bạn khoảng ${formatDistance(user.distanceMeters)} · Bấm Chỉ đường để tính tuyến`;
+      const button = document.getElementById('btnDirectionsToUser');
+      if (button) button.onclick = () => openDirectionsForSelectedUser(user);
+      const status = document.getElementById('selectedUserRouteStatus');
+      if (status) status.textContent = '';
+      openUserPopup(user);
+    };
       listEl.appendChild(card);
 
       // Thêm vào mobile sheet
@@ -2034,7 +2059,8 @@ function setupEventListeners() {
   // Recenter GPS
   document.getElementById('btnRecenter').onclick = () => {
     updateMapPosition();
-    STATE.map.setView([STATE.currentLat, STATE.currentLon], 14);
+    STATE.map?.setView([STATE.currentLat, STATE.currentLon], 14);
+    STATE.mapboxMap?.flyTo({ center: [STATE.currentLon, STATE.currentLat], zoom: 14 });
   };
 
   // Popup close

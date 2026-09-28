@@ -18,6 +18,9 @@ export const CONFIG = {
   UPLOAD_DIR: path.resolve(__dirname, '../../uploads'),
   PUBLIC_DIR: path.resolve(__dirname, '../public'),
   
+  MAPBOX_ACCESS_TOKEN: process.env.MAPBOX_ACCESS_TOKEN || '',
+  MAPBOX_STYLE: process.env.MAPBOX_STYLE || 'mapbox://styles/mapbox/streets-v12',
+
   // Môi trường
   NODE_ENV: process.env.NODE_ENV || 'development',
 };

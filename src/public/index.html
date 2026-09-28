@@ -29,7 +29,12 @@
     }
   </script>
   
-  <!-- Leaflet CSS & JS (Bản đồ miễn phí 100%, không cần API Key) -->
+  <!-- Mapbox GL JS: token is injected server-side through a safe public config endpoint -->
+  <link href="https://api.mapbox.com/mapbox-gl-js/v3.15.0/mapbox-gl.css" rel="stylesheet">
+  <script src="https://api.mapbox.com/mapbox-gl-js/v3.15.0/mapbox-gl.js"></script>
+  <script src="/api/config/public.js"></script>
+
+  <!-- Leaflet CSS & JS (fallback for radar overlays and legacy controls) -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
@@ -551,10 +556,22 @@
       </div>
     </aside>
 
-    <!-- RIGHT: INTERACTIVE MAP AREA (GOOGLE MAPS) -->
-    <main id="mainMapArea" class="flex-1 relative h-full w-full">
-      <!-- Leaflet Map Container -->
-      <div id="map" class="w-full h-full z-0"></div>
+      <!-- MAPBOX PRIMARY MAP AREA -->
+      <main id="mainMapArea" class="flex-1 relative h-full w-full">
+        <div id="mapboxMap" class="absolute inset-0 w-full h-full z-0" aria-label="Bản đồ Mapbox tương tác"></div>
+        <div id="mapboxStatus" class="absolute top-3 left-3 z-10 hidden bg-slate-950/90 border border-[#3CACFD]/60 rounded-xl px-3 py-2 text-xs text-slate-100 shadow-lg" role="status" aria-live="polite"></div>
+        <div id="selectedUserRouteCard" class="hidden absolute bottom-20 md:bottom-6 left-3 right-3 md:left-1/2 md:-translate-x-1/2 max-w-md mx-auto z-20 bg-slate-950/95 border border-[#3CACFD]/60 rounded-2xl p-3 shadow-2xl">
+          <div class="flex items-center gap-2.5">
+            <img id="selectedUserRouteAvatar" src="" alt="Người dùng được chọn" class="w-11 h-11 rounded-full object-cover border-2 border-[#3CACFD]">
+            <div class="min-w-0 flex-1">
+              <p id="selectedUserRouteName" class="text-sm font-bold text-white truncate"></p>
+              <p id="selectedUserRouteMetrics" class="text-[10px] text-slate-300"></p>
+            </div>
+            <button id="btnDirectionsToUser" type="button" class="min-h-11 px-3 bg-[#ED0309] hover:bg-[#b90008] text-white font-bold text-xs rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#3CACFD]">Chỉ đường</button>
+          </div>
+          <p id="selectedUserRouteStatus" class="mt-2 min-h-4 text-[10px] text-slate-400" role="status" aria-live="polite"></p>
+        </div>
+      </main>
 
       <!-- Quick Location Ping Status Banner & Check-in Pins Toggle -->
       <div class="absolute top-2.5 right-2.5 flex items-center gap-1.5 sm:gap-2 z-10">

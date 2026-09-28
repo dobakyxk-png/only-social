@@ -13,6 +13,7 @@ import { notificationsRouter } from './modules/notifications/notifications.contr
 import { callingRouter } from './modules/calling/calling.controller';
 import { moderationRouter } from './modules/moderation/moderation.controller';
 import { ridesRouter } from './modules/rides/rides.controller';
+import { routingRouter } from './modules/routing/routing.controller';
 
 const app = express();
 
@@ -39,6 +40,11 @@ app.get('/', (_req: Request, res: Response) => {
   res.sendFile(path.join(publicDir, 'index.html'));
 });
 
+// Public client configuration: Mapbox public token is intended for browser use and is restricted by Mapbox URL scopes.
+app.get('/api/config/public.js', (_req: Request, res: Response) => {
+  res.type('application/javascript').send(`window.ONLY_PUBLIC_CONFIG=${JSON.stringify({ mapboxToken: CONFIG.MAPBOX_ACCESS_TOKEN, mapboxStyle: CONFIG.MAPBOX_STYLE })};`);
+});
+
 // API Health Check
 app.get('/api/health', (_req: Request, res: Response) => {
   res.json({
@@ -61,6 +67,7 @@ app.use('/api/v1/notifications', notificationsRouter);
 app.use('/api/v1/calls', callingRouter);
 app.use('/api/v1/moderation', moderationRouter);
 app.use('/api/v1/rides', ridesRouter);
+app.use('/api/v1/routing', routingRouter);
 
 // Fallback error handler
 app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
