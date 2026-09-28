@@ -227,7 +227,7 @@
               </div>
               <div>
                 <h4 class="text-xs font-bold text-slate-100">Chế Độ Kiếm Tiền (Có Xe)</h4>
-                <p class="text-[10px] text-slate-400">Nhận cuốc xe tiện chuyến rảnh rỗi</p>
+                <p class="text-[10px] text-slate-400">Nhận cuốc xe tiện chuyến rảnh rỗi, giá tự thỏa thuận</p>
               </div>
             </div>
             <label class="relative inline-flex items-center cursor-pointer">
@@ -252,7 +252,11 @@
                 <input type="text" id="driverVehiclePlate" placeholder="VD: Honda SH - 29A-123.45" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-200">
               </div>
             </div>
-            <p class="text-[10px] text-amber-300 italic">🟢 Khi bật: Bạn sẽ nhận được chuông thông báo khi có người quanh đây đặt cuốc xe!</p>
+            <div>
+              <label for="driverDestinationFilter" class="block text-[10px] text-slate-400 mb-0.5">Tiện chuyến theo hướng (không bắt buộc)</label>
+              <input type="text" id="driverDestinationFilter" placeholder="VD: Cầu Giấy, Mỹ Đình..." class="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-200">
+            </div>
+            <p class="text-[10px] text-amber-300 italic">🟢 Khi bật: Bạn sẽ nhận được chuông thông báo khi có cuốc xe quanh điểm đón trong bán kính 5km.</p>
           </div>
         </div>
 
@@ -267,39 +271,46 @@
             </span>
           </div>
 
-          <!-- Route Inputs -->
+          <!-- Route Inputs: both endpoints must have coordinates -->
           <div class="flex flex-col gap-2 relative">
             <div class="flex items-center gap-2 bg-slate-900 border border-slate-700/80 rounded-xl px-2.5 py-1.5">
-              <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 shrink-0"></span>
-              <input type="text" id="inputRidePickup" placeholder="Điểm đón (mặc định vị trí hiện tại)" class="w-full bg-transparent text-xs text-slate-100 focus:outline-none placeholder-slate-500">
+              <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 shrink-0" aria-hidden="true"></span>
+              <label for="inputRidePickup" class="sr-only">Tên điểm đón</label>
+              <input type="text" id="inputRidePickup" aria-label="Tên điểm đón" placeholder="Điểm đón: chọn trên bản đồ hoặc GPS" class="w-full bg-transparent text-xs text-slate-100 focus:outline-none placeholder-slate-500">
+              <button type="button" id="btnPickRidePickup" class="min-w-11 min-h-11 p-1 text-emerald-400 hover:bg-slate-800 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400" title="Chọn điểm đón trên bản đồ" aria-label="Chọn điểm đón trên bản đồ"><i data-lucide="map-pin" class="w-3.5 h-3.5"></i></button>
+              <button type="button" id="btnUseCurrentRidePickup" class="min-w-11 min-h-11 p-1 text-emerald-400 hover:bg-slate-800 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400" title="Dùng vị trí hiện tại" aria-label="Dùng vị trí hiện tại làm điểm đón"><i data-lucide="locate-fixed" class="w-3.5 h-3.5"></i></button>
             </div>
             <div class="flex items-center gap-2 bg-slate-900 border border-slate-700/80 rounded-xl px-2.5 py-1.5">
-              <span class="w-2.5 h-2.5 rounded-full bg-rose-400 shrink-0"></span>
-              <input type="text" id="inputRideDropoff" placeholder="Điểm đến: Nhập địa chỉ muốn đến..." class="w-full bg-transparent text-xs text-slate-100 focus:outline-none placeholder-slate-500">
+              <span class="w-2.5 h-2.5 rounded-full bg-rose-400 shrink-0" aria-hidden="true"></span>
+              <label for="inputRideDropoff" class="sr-only">Tên điểm đến</label>
+              <input type="text" id="inputRideDropoff" aria-label="Tên điểm đến" placeholder="Điểm đến: chọn trên bản đồ" class="w-full bg-transparent text-xs text-slate-100 focus:outline-none placeholder-slate-500">
+              <button type="button" id="btnPickRideDropoff" class="min-w-11 min-h-11 p-1 text-rose-300 hover:bg-slate-800 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300" title="Chọn điểm đến trên bản đồ" aria-label="Chọn điểm đến trên bản đồ"><i data-lucide="map-pin-plus" class="w-3.5 h-3.5"></i></button>
             </div>
+            <p id="rideRouteHint" class="text-[10px] text-slate-500" role="status" aria-live="polite">Chọn cả điểm đón và điểm đến trên bản đồ, hoặc dùng GPS cho điểm đón.</p>
+            <p id="rideEstimateStatus" class="min-h-4 text-[10px] text-slate-400" role="status" aria-live="polite"></p>
           </div>
 
           <!-- Vehicle Choice & Price Estimation -->
           <div class="grid grid-cols-2 gap-2">
             <div class="flex flex-col gap-1">
-              <label class="text-[10px] text-slate-400">Phương tiện</label>
-              <select id="selectRideVehicle" class="bg-slate-900 border border-slate-700 rounded-xl p-2 text-xs text-slate-200">
+              <label for="selectRideVehicle" class="text-[10px] text-slate-400">Phương tiện</label>
+              <select id="selectRideVehicle" class="min-h-11 bg-slate-900 border border-slate-700 rounded-xl p-2 text-xs text-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400">
                 <option value="motorbike">🛵 Xe máy</option>
                 <option value="car_4seats">🚗 Ô tô 4 chỗ</option>
                 <option value="car_7seats">🚙 Ô tô 7 chỗ</option>
               </select>
             </div>
             <div class="flex flex-col gap-1">
-              <label class="text-[10px] text-slate-400">Giá đề xuất của bạn (VNĐ)</label>
-              <input type="number" id="inputRidePrice" placeholder="VD: 30000" class="bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-2 text-xs text-emerald-400 font-bold">
+              <label for="inputRidePrice" class="text-[10px] text-slate-400">Giá đề xuất của bạn (VNĐ)</label>
+              <input type="number" id="inputRidePrice" min="0" inputmode="numeric" placeholder="Theo gợi ý" class="min-h-11 bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-2 text-xs text-emerald-400 font-bold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400">
             </div>
           </div>
 
           <!-- Price Recommendation & Insurance Badge -->
           <div class="p-2.5 bg-slate-900/60 rounded-xl border border-slate-800 flex flex-col gap-1 text-[10px]">
-            <div class="flex items-center justify-between text-slate-300">
-              <span id="rideEstimateInfo">Lộ trình dự kiến: ~3.5 km (10 phút)</span>
-              <span id="rideEstimateRange" class="text-amber-400 font-semibold">Gợi ý: 20.000đ - 30.000đ</span>
+            <div class="flex items-center justify-between gap-2 text-slate-300">
+              <span id="rideEstimateInfo">Chưa có lộ trình</span>
+              <span id="rideEstimateRange" class="text-amber-400 font-semibold text-right">Chọn điểm để xem giá</span>
             </div>
             <div class="flex items-center gap-1.5 text-emerald-400 font-medium pt-0.5">
               <i data-lucide="shield-check" class="w-3.5 h-3.5 text-emerald-400 shrink-0"></i>
@@ -307,18 +318,19 @@
             </div>
           </div>
 
-          <button id="btnFindRides" class="w-full py-2.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-xl transition shadow flex items-center justify-center gap-2">
+          <button id="btnFindRides" type="button" class="min-h-11 w-full py-2.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-xl transition shadow flex items-center justify-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300">
             <i data-lucide="search" class="w-4 h-4"></i>
             <span>Tìm Người Quanh Đây Đi Cùng</span>
           </button>
+          <p id="rideActionStatus" class="min-h-4 text-[10px] text-slate-400" role="status" aria-live="polite"></p>
         </div>
 
         <!-- Active Ride Status & Driver Offers Container -->
-        <div id="activeRideContainer" class="hidden flex-col gap-3">
+        <div id="activeRideContainer" class="hidden flex-col gap-3" aria-live="polite">
           <!-- Status Banner -->
           <div class="bg-emerald-950/50 border border-emerald-800 p-3 rounded-2xl flex items-center justify-between">
             <div class="flex items-center gap-2.5">
-              <span class="w-3 h-3 rounded-full bg-emerald-400 animate-ping"></span>
+              <span id="activeRideStatusDot" class="w-3 h-3 rounded-full bg-emerald-400 animate-ping shrink-0"></span>
               <div>
                 <p id="activeRideStatusText" class="text-xs font-bold text-emerald-300">Đang tìm xe quanh đây...</p>
                 <p id="activeRideDetailText" class="text-[10px] text-slate-400">Đã phát sóng tới các tài xế lân cận</p>
@@ -329,11 +341,46 @@
             </button>
           </div>
 
-          <!-- Driver Offers List -->
+          <div id="rideStatusTimeline" class="ride-status-timeline" aria-label="Tiến trình chuyến đi"></div>
+           <div id="rideLiveStatus" class="min-h-4 text-[10px] text-slate-400" role="status" aria-live="polite"></div>
+           <div id="rideInsuranceInfo" class="hidden p-2.5 bg-emerald-950/40 border border-emerald-800/70 rounded-xl text-[10px] text-emerald-300"></div>
+           <div id="rideDriverLocationInfo" class="hidden p-2.5 bg-slate-900/60 border border-slate-800 rounded-xl text-[10px] text-slate-300"></div>
+           <div id="rideStatusActions" class="hidden flex flex-wrap gap-2"></div>
+
+           <!-- Driver-side open request discovery and offer form -->
+          <div id="driverRequestDiscovery" class="hidden bg-slate-900/70 border border-amber-800/50 rounded-xl p-3 flex flex-col gap-2" aria-live="polite">
+            <div class="flex items-center justify-between gap-2">
+              <h5 class="text-xs font-bold text-amber-300">Cuốc xe đang mở gần bạn</h5>
+              <button id="btnRefreshRideRequests" type="button" class="min-h-11 min-w-11 p-2 text-amber-300 hover:bg-slate-800 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300" aria-label="Tải lại cuốc xe đang mở" title="Tải lại"><i data-lucide="refresh-cw" class="w-4 h-4 mx-auto"></i></button>
+            </div>
+            <p id="driverRequestStatus" class="min-h-4 text-[10px] text-slate-400" role="status"></p>
+            <div id="listOpenRideRequests" class="flex flex-col gap-2"></div>
+          </div>
+          <div id="driverRideActionBox" class="hidden bg-slate-900/70 border border-amber-800/50 rounded-xl p-3 flex flex-col gap-2">
+            <div class="flex items-center justify-between">
+              <h5 class="text-xs font-bold text-amber-300">Gửi báo giá cho khách</h5>
+              <span id="driverRideDistanceLabel" class="text-[10px] text-slate-400"></span>
+            </div>
+            <p id="driverRideRouteLabel" class="text-[10px] text-slate-300"></p>
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <label for="driverOfferPrice" class="sr-only">Giá báo (VNĐ)</label>
+                <input id="driverOfferPrice" type="number" min="1" inputmode="numeric" class="min-h-11 w-full bg-slate-800 border border-slate-700 rounded-lg px-2 text-xs text-emerald-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400" placeholder="Giá báo (VNĐ)">
+              </div>
+              <div>
+                <label for="driverOfferEta" class="sr-only">Số phút đến đón</label>
+                <input id="driverOfferEta" type="number" min="1" inputmode="numeric" class="min-h-11 w-full bg-slate-800 border border-slate-700 rounded-lg px-2 text-xs text-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400" placeholder="Phút đến đón">
+              </div>
+            </div>
+            <label for="driverOfferNote" class="sr-only">Ghi chú cho khách</label>
+            <input id="driverOfferNote" type="text" maxlength="120" class="min-h-11 bg-slate-800 border border-slate-700 rounded-lg px-2 text-xs text-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400" placeholder="Ghi chú (không bắt buộc)">
+            <p id="driverOfferStatus" class="min-h-4 text-[10px] text-slate-400" role="status" aria-live="polite"></p>
+            <button id="btnSubmitDriverOffer" type="button" class="min-h-11 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-xl text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300">Gửi báo giá cho khách</button>
+          </div>
           <div>
             <h5 class="text-xs font-bold text-slate-300 mb-2">Báo giá từ tài xế quanh đây:</h5>
             <div id="listDriverOffers" class="flex flex-col gap-2">
-              <div class="text-center py-6 text-xs text-slate-500">Đang chờ tài xế gửi đề xuất giá...</div>
+              <div class="text-center py-6 text-xs text-slate-500">Chưa có báo giá. Bật chế độ tài xế để nhận cuốc.</div>
             </div>
           </div>
         </div>

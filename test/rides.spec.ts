@@ -220,7 +220,11 @@ describe('Only Ride Service (Kết nối Đi lại & Tiện chuyến Cộng đ�
     const pickingUp = RidesService.updateRideStatus(driverId, ride.id, 'picking_up');
     expect(pickingUp.status).toBe('picking_up');
 
-    // Hoàn thành chuyến
+    // Tài xế đến điểm đón, bắt đầu và hoàn thành chuyến theo đúng lifecycle
+    const arrived = RidesService.updateRideStatus(driverId, ride.id, 'arrived');
+    expect(arrived.status).toBe('arrived');
+    const inTrip = RidesService.updateRideStatus(driverId, ride.id, 'in_trip');
+    expect(inTrip.status).toBe('in_trip');
     const completed = RidesService.updateRideStatus(driverId, ride.id, 'completed');
     expect(completed.status).toBe('completed');
     expect(completed.completedAt).toBeDefined();

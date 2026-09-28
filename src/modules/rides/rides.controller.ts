@@ -8,14 +8,15 @@ const router: Router = Router();
 router.post('/estimate', authMiddleware, (req: AuthenticatedRequest, res: Response) => {
   try {
     const { pickupLat, pickupLon, dropoffLat, dropoffLon, vehicleType } = req.body;
-    if (!pickupLat || !pickupLon || !dropoffLat || !dropoffLon) {
-      return res.status(400).json({ success: false, message: 'Vui lòng cung cấp toạ độ điểm đón và điểm đến' });
+    const coords = [pickupLat, pickupLon, dropoffLat, dropoffLon].map(Number);
+    if (coords.some((value) => !Number.isFinite(value)) || coords[0] < -90 || coords[0] > 90 || coords[2] < -90 || coords[2] > 90 || coords[1] < -180 || coords[1] > 180 || coords[3] < -180 || coords[3] > 180) {
+      return res.status(400).json({ success: false, message: 'Vui lòng cung cấp tọa độ hợp lệ cho điểm đón và điểm đến' });
     }
     const estimate = RidesService.estimateTrip(
-      Number(pickupLat),
-      Number(pickupLon),
-      Number(dropoffLat),
-      Number(dropoffLon),
+      coords[0],
+      coords[1],
+      coords[2],
+      coords[3],
       vehicleType || 'motorbike'
     );
     res.json({ success: true, data: estimate });
@@ -41,7 +42,18 @@ router.post('/earning-mode', authMiddleware, (req: AuthenticatedRequest, res: Re
 // POST /api/v1/rides/request (Hành khách đặt cuốc xe tiện chuyến)
 router.post('/request', authMiddleware, (req: AuthenticatedRequest, res: Response) => {
   try {
-    const ride = RidesService.createRideRequest(req.user!.userId, req.body);
+    const body = req.body;
+    const requiredText = ['pickupName', 'dropoffName'];
+    if (requiredText.some((key) => typeof body[key] !== 'string' || !body[key].trim())) {
+      return res.status(400).json({ success: false, message: 'Vui lòng nhập điểm đón và điểm đến' });
+    }
+    const coordinateKeys = ['pickupLat', 'pickupLon', 'dropoffLat', 'dropoffLon'];
+    const numericBody = { ...body };
+    for (const key of coordinateKeys) numericBody[key] = Number(body[key]);
+    if (numericBody[coordinateKeys[0]] < -90 || numericBody[coordinateKeys[0]] > 90 || numericBody[coordinateKeys[2]] < -90 || numericBody[coordinateKeys[2]] > 90 || numericBody[coordinateKeys[1]] < -180 || numericBody[coordinateKeys[1]] > 180 || numericBody[coordinateKeys[3]] < -180 || numericBody[coordinateKeys[3]] > 180 || coordinateKeys.some((key) => !Number.isFinite(numericBody[key]))) {
+      return res.status(400).json({ success: false, message: 'Tọa độ điểm đón/điểm đến không hợp lệ' });
+    }
+    const ride = RidesService.createRideRequest(req.user!.userId, numericBody);
     res.status(201).json({
       success: true,
       message: 'Đã phát tín hiệu tìm xe quanh đây',
@@ -65,7 +77,7 @@ router.get('/active', authMiddleware, (req: AuthenticatedRequest, res: Response)
 // GET /api/v1/rides/:id/offers (Lấy danh sách các đề xuất giá của tài xế)
 router.get('/:id/offers', authMiddleware, (req: AuthenticatedRequest, res: Response) => {
   try {
-    const offers = RidesService.getRideOffers(req.params.id as string);
+    const offers = RidesService.getRideOffers(req.params.id as string, req.user!.userId);
     res.json({ success: true, count: offers.length, data: offers });
   } catch (error: any) {
     res.status(400).json({ success: false, message: error.message });
@@ -76,13 +88,15 @@ router.get('/:id/offers', authMiddleware, (req: AuthenticatedRequest, res: Respo
 router.post('/:id/offer', authMiddleware, (req: AuthenticatedRequest, res: Response) => {
   try {
     const { offeredPrice, estimatedPickupMins, note } = req.body;
-    if (!offeredPrice || offeredPrice <= 0) {
-      return res.status(400).json({ success: false, message: 'Vui lòng nhập giá đề xuất hợp lệ' });
+    const price = Number(offeredPrice);
+    const eta = estimatedPickupMins === undefined || estimatedPickupMins === '' ? 5 : Number(estimatedPickupMins);
+    if (!Number.isFinite(price) || price < 1000 || price > 10000000 || !Number.isFinite(eta) || eta < 1 || eta > 180) {
+      return res.status(400).json({ success: false, message: 'Giá báo hoặc thời gian đón không hợp lệ' });
     }
     const offer = RidesService.makeRideOffer(req.user!.userId, req.params.id as string, {
-      offeredPrice: Number(offeredPrice),
-      estimatedPickupMins: estimatedPickupMins ? Number(estimatedPickupMins) : 5,
-      note,
+      offeredPrice: price,
+      estimatedPickupMins: eta,
+      note: typeof note === 'string' ? note.slice(0, 120) : undefined,
     });
     res.status(201).json({ success: true, message: 'Đã gửi báo giá cho hành khách', data: offer });
   } catch (error: any) {
@@ -108,12 +122,24 @@ router.post('/:id/accept-offer/:offerId', authMiddleware, (req: AuthenticatedReq
   }
 });
 
+// POST /api/v1/rides/:id/driver-location (Tài xế stream GPS khi đón khách)
+router.post('/:id/driver-location', authMiddleware, (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { lat, lon } = req.body;
+    const ride = RidesService.updateDriverLocation(req.user!.userId, req.params.id as string, Number(lat), Number(lon));
+    res.json({ success: true, data: ride });
+  } catch (error: any) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
 // POST /api/v1/rides/:id/status (Cập nhật trạng thái cuốc xe: đón, đến, hoàn thành, huỷ)
 router.post('/:id/status', authMiddleware, (req: AuthenticatedRequest, res: Response) => {
   try {
     const { status } = req.body;
-    const allowedStatuses: Array<'picking_up' | 'in_trip' | 'completed' | 'cancelled'> = [
+    const allowedStatuses: Array<'picking_up' | 'arrived' | 'in_trip' | 'completed' | 'cancelled'> = [
       'picking_up',
+      'arrived',
       'in_trip',
       'completed',
       'cancelled',

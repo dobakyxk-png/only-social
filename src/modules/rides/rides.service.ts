@@ -5,9 +5,28 @@ import {
   RideRequest,
   RideOffer,
   RideDTO,
+  RideStatus,
 } from '../../types';
 import { calculateDistance } from '../../utils/geo';
 import { NotificationsService } from '../notifications/notifications.service';
+
+const VEHICLE_TYPES: Array<CreateRideInput['vehicleType']> = ['motorbike', 'car_4seats', 'car_7seats'];
+const ACTIVE_RIDE_STATUSES: RideStatus[] = ['searching', 'negotiating', 'accepted', 'picking_up', 'arrived', 'in_trip'];
+const OFFERABLE_RIDE_STATUSES: RideStatus[] = ['searching', 'negotiating'];
+const MAX_RIDE_PRICE = 100_000_000;
+const MAX_PLACE_NAME_LENGTH = 200;
+const MAX_NOTE_LENGTH = 500;
+const MAX_VEHICLE_TEXT_LENGTH = 100;
+
+type RideRealtimeEvent =
+  | { type: 'status_changed'; ride: RideDTO }
+  | { type: 'driver_moved'; ride: RideDTO };
+
+let rideRealtimeEmitter: ((event: RideRealtimeEvent) => void) | null = null;
+
+export function registerRideRealtimeEmitter(emitter: (event: RideRealtimeEvent) => void) {
+  rideRealtimeEmitter = emitter;
+}
 
 export interface CreateRideInput {
   pickupName: string;
@@ -21,6 +40,75 @@ export interface CreateRideInput {
   suggestedPrice?: number; // Khách có thể tự đề xuất giá hoặc để trống nhận gợi ý
 }
 
+export interface RouteEstimate {
+  distanceKm: number;
+  estimatedMins: number;
+  suggestedPrice: number;
+  priceRange: { min: number; max: number };
+  routeProvider: 'osrm' | 'estimate';
+  routeGeometry?: Array<[number, number]>;
+}
+
+function isVehicleType(value: unknown): value is CreateRideInput['vehicleType'] {
+  return value === 'motorbike' || value === 'car_4seats' || value === 'car_7seats';
+}
+
+function isRideStatus(value: unknown): value is RideStatus {
+  return value === 'searching' || value === 'negotiating' || value === 'accepted' || value === 'picking_up' || value === 'arrived' || value === 'in_trip' || value === 'completed' || value === 'cancelled';
+}
+
+function assertActiveUser(userId: string, message = 'Tài khoản không tồn tại hoặc đã ngừng hoạt động') {
+  if (typeof userId !== 'string' || !userId.trim()) throw new Error(message);
+  const user = db.users.get(userId);
+  if (!user || (user.status && user.status !== 'active')) throw new Error(message);
+}
+
+function assertCoordinatePair(lat: unknown, lon: unknown, label: string) {
+  if (typeof lat !== 'number' || typeof lon !== 'number' || !Number.isFinite(lat) || !Number.isFinite(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+    throw new Error(`${label} không hợp lệ`);
+  }
+}
+
+function assertPlaceName(value: unknown, label: string) {
+  if (typeof value !== 'string' || !value.trim() || value.trim().length > MAX_PLACE_NAME_LENGTH) {
+    throw new Error(`${label} không hợp lệ`);
+  }
+}
+
+function normalizeOptionalText(value: unknown, label: string, maxLength: number): string | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (typeof value !== 'string') throw new Error(`${label} không hợp lệ`);
+  const normalized = value.trim();
+  if (normalized.length > maxLength) throw new Error(`${label} quá dài`);
+  return normalized || undefined;
+}
+
+function normalizePrice(value: unknown, label: string, allowZero = false): number | undefined {
+  if (value === undefined || value === null || (allowZero && value === 0)) return undefined;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < (allowZero ? 0 : 1000) || value > MAX_RIDE_PRICE) {
+    throw new Error(`${label} không hợp lệ`);
+  }
+  return value;
+}
+
+function assertDestinationFilter(value: unknown): { name: string; lat: number; lon: number } | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'object') throw new Error('Bộ lọc điểm đến không hợp lệ');
+  const filter = value as { name?: unknown; lat?: unknown; lon?: unknown };
+  assertPlaceName(filter.name, 'Tên điểm đến');
+  assertCoordinatePair(filter.lat, filter.lon, 'Toạ độ điểm đến');
+  return { name: (filter.name as string).trim(), lat: filter.lat as number, lon: filter.lon as number };
+}
+
+function emitRideRealtimeEvent(event: RideRealtimeEvent) {
+  if (!rideRealtimeEmitter) return;
+  try {
+    rideRealtimeEmitter(event);
+  } catch (error) {
+    console.warn('[Ride] Lỗi phát sự kiện realtime:', error);
+  }
+}
+
 export class RidesService {
   /**
    * Tính toán khoảng cách lộ trình (km), thời gian dự kiến (phút) và giá sàn cộng đồng tham khảo (VNĐ)
@@ -31,7 +119,10 @@ export class RidesService {
     dropoffLat: number,
     dropoffLon: number,
     vehicleType: 'motorbike' | 'car_4seats' | 'car_7seats'
-  ): { distanceKm: number; estimatedMins: number; suggestedPrice: number; priceRange: { min: number; max: number } } {
+  ): RouteEstimate {
+    assertCoordinatePair(pickupLat, pickupLon, 'Toạ độ điểm đón');
+    assertCoordinatePair(dropoffLat, dropoffLon, 'Toạ độ điểm đến');
+    if (!isVehicleType(vehicleType)) throw new Error('Loại phương tiện không hợp lệ');
     const distanceMeters = calculateDistance(pickupLat, pickupLon, dropoffLat, dropoffLon);
     // Tính hệ số uốn lượn đường phố Việt Nam ~1.25 lần đường chim bay
     const distanceKm = Number(Math.max(0.5, (distanceMeters * 1.25) / 1000).toFixed(1));
@@ -64,6 +155,7 @@ export class RidesService {
         min: Math.round((suggestedPrice * 0.85) / 5000) * 5000,
         max: Math.round((suggestedPrice * 1.25) / 5000) * 5000,
       },
+      routeProvider: 'estimate',
     };
   }
 
@@ -81,25 +173,32 @@ export class RidesService {
       destinationFilter?: { name: string; lat: number; lon: number };
     }
   ): { mode: DriverEarningMode; profile: DriverProfile } {
+    assertActiveUser(userId);
+    if (!data || typeof data.isActive !== 'boolean') throw new Error('Trạng thái Chế độ Kiếm Tiền không hợp lệ');
+    if (data.vehicleType !== undefined && !isVehicleType(data.vehicleType)) throw new Error('Loại phương tiện không hợp lệ');
+    const vehicleType = data.vehicleType || db.driverProfiles.get(userId)?.vehicleType || 'motorbike';
+    const vehicleBrand = normalizeOptionalText(data.vehicleBrand, 'Hãng xe', MAX_VEHICLE_TEXT_LENGTH);
+    const licensePlate = normalizeOptionalText(data.licensePlate, 'Biển số xe', MAX_VEHICLE_TEXT_LENGTH);
+    const vehicleColor = normalizeOptionalText(data.vehicleColor, 'Màu xe', MAX_VEHICLE_TEXT_LENGTH);
+    const destinationFilter = assertDestinationFilter(data.destinationFilter);
     let profile = db.driverProfiles.get(userId);
-    const vehicleType = data.vehicleType || profile?.vehicleType || 'motorbike';
 
     if (!profile) {
       profile = {
         userId,
         vehicleType,
-        vehicleBrand: data.vehicleBrand || (vehicleType === 'motorbike' ? 'Xe máy cá nhân' : 'Ô tô cá nhân'),
-        licensePlate: data.licensePlate || 'Biển số cá nhân',
-        vehicleColor: data.vehicleColor || 'Trắng',
+        vehicleBrand: vehicleBrand || (vehicleType === 'motorbike' ? 'Xe máy cá nhân' : 'Ô tô cá nhân'),
+        licensePlate: licensePlate || 'Biển số cá nhân',
+        vehicleColor: vehicleColor || 'Trắng',
         ratingAvg: 5.0,
         totalTrips: 0,
         isVerified: true,
       };
       db.driverProfiles.set(userId, profile);
     } else {
-      if (data.vehicleBrand) profile.vehicleBrand = data.vehicleBrand;
-      if (data.licensePlate) profile.licensePlate = data.licensePlate;
-      if (data.vehicleColor) profile.vehicleColor = data.vehicleColor;
+      if (vehicleBrand) profile.vehicleBrand = vehicleBrand;
+      if (licensePlate) profile.licensePlate = licensePlate;
+      if (vehicleColor) profile.vehicleColor = vehicleColor;
       if (data.vehicleType) profile.vehicleType = data.vehicleType;
       db.driverProfiles.set(userId, profile);
     }
@@ -111,13 +210,13 @@ export class RidesService {
         isActive: data.isActive,
         vehicleType,
         status: 'idle',
-        destinationFilter: data.destinationFilter,
+        destinationFilter,
         lastPingAt: new Date(),
       };
     } else {
       mode.isActive = data.isActive;
       mode.vehicleType = vehicleType;
-      if (data.destinationFilter !== undefined) mode.destinationFilter = data.destinationFilter;
+      if (data.destinationFilter !== undefined) mode.destinationFilter = destinationFilter;
       mode.lastPingAt = new Date();
     }
     db.driverEarningModes.set(userId, mode);
@@ -129,26 +228,37 @@ export class RidesService {
    * Tạo yêu cầu di chuyển / cuốc xe mới (Hành khách gọi xe)
    */
   static createRideRequest(passengerId: string, input: CreateRideInput): RideDTO {
+    assertActiveUser(passengerId);
+    if (!input || typeof input !== 'object') throw new Error('Dữ liệu yêu cầu chuyến đi không hợp lệ');
+    assertPlaceName(input.pickupName, 'Tên điểm đón');
+    assertPlaceName(input.dropoffName, 'Tên điểm đến');
+    assertCoordinatePair(input.pickupLat, input.pickupLon, 'Toạ độ điểm đón');
+    assertCoordinatePair(input.dropoffLat, input.dropoffLon, 'Toạ độ điểm đến');
+    if (!isVehicleType(input.vehicleType)) throw new Error('Loại phương tiện không hợp lệ');
+    const suggestedPrice = normalizePrice(input.suggestedPrice, 'Giá đề xuất', true);
+    const passengerNote = normalizeOptionalText(input.passengerNote, 'Ghi chú hành khách', MAX_NOTE_LENGTH);
+
     // Kiểm tra xem khách có đang trong cuốc nào chưa hoàn thành không
     for (const r of db.rideRequests.values()) {
       if (
         r.passengerId === passengerId &&
-        ['searching', 'negotiating', 'accepted', 'picking_up', 'in_trip'].includes(r.status)
+        ACTIVE_RIDE_STATUSES.includes(r.status)
       ) {
         throw new Error('Bạn đang có một yêu cầu chuyến đi chưa hoàn thành. Vui lòng huỷ hoặc kết thúc chuyến hiện tại trước.');
       }
     }
 
-    const { distanceKm, estimatedMins, suggestedPrice } = this.estimateTrip(
+    const estimate = this.estimateTrip(
       input.pickupLat,
       input.pickupLon,
       input.dropoffLat,
       input.dropoffLon,
       input.vehicleType
     );
+    const { distanceKm, estimatedMins, suggestedPrice: calculatedSuggestedPrice } = estimate;
 
     const rideId = `ride_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-    const finalSuggestedPrice = input.suggestedPrice && input.suggestedPrice > 0 ? input.suggestedPrice : suggestedPrice;
+    const finalSuggestedPrice = suggestedPrice ?? calculatedSuggestedPrice;
 
     const ride: RideRequest = {
       id: rideId,
@@ -162,8 +272,9 @@ export class RidesService {
       distanceKm,
       estimatedMins,
       vehicleType: input.vehicleType,
-      passengerNote: input.passengerNote?.trim(),
+      passengerNote,
       suggestedPrice: finalSuggestedPrice,
+      routeProvider: estimate.routeProvider,
       status: 'searching',
       createdAt: new Date(),
     };
@@ -236,9 +347,19 @@ export class RidesService {
   ): RideOffer {
     const ride = db.rideRequests.get(rideId);
     if (!ride) throw new Error('Cuốc xe không tồn tại');
-    if (['accepted', 'picking_up', 'in_trip', 'completed', 'cancelled'].includes(ride.status)) {
+    if (ride.passengerId === driverId) throw new Error('Hành khách không thể tự gửi báo giá cho mình');
+    const mode = db.driverEarningModes.get(driverId);
+    const vehicle = db.driverProfiles.get(driverId);
+    if (!mode?.isActive || mode.status !== 'idle') throw new Error('Bạn chưa bật Chế độ Kiếm Tiền hoặc đang bận chuyến khác');
+    if (!vehicle || vehicle.vehicleType !== ride.vehicleType) throw new Error('Phương tiện của bạn không phù hợp với yêu cầu');
+    if (!Number.isFinite(data.offeredPrice) || data.offeredPrice < 1000 || data.offeredPrice > 10000000) throw new Error('Giá báo không hợp lệ');
+    if (data.estimatedPickupMins !== undefined && (!Number.isFinite(data.estimatedPickupMins) || data.estimatedPickupMins < 1 || data.estimatedPickupMins > 180)) throw new Error('Thời gian đón không hợp lệ');
+    if (['accepted', 'picking_up', 'arrived', 'in_trip', 'completed', 'cancelled'].includes(ride.status)) {
       throw new Error('Cuốc xe này đã có người nhận hoặc đã kết thúc');
     }
+
+    const existingOffer = Array.from(db.rideOffers.values()).find((item) => item.rideId === rideId && item.driverId === driverId && item.status === 'pending');
+    if (existingOffer) throw new Error('Bạn đã gửi báo giá cho cuốc xe này');
 
     const offerId = `off_${driverId}_${rideId}`;
     const offer: RideOffer = {
@@ -279,7 +400,9 @@ export class RidesService {
     if (ride.passengerId !== passengerId) throw new Error('Bạn không có quyền chốt chuyến này');
 
     const offer = db.rideOffers.get(offerId);
-    if (!offer || offer.rideId !== rideId) throw new Error('Đề xuất giá không hợp lệ');
+    if (!offer || offer.rideId !== rideId || offer.status !== 'pending') throw new Error('Đề xuất giá không hợp lệ hoặc đã được xử lý');
+    if (ride.status !== 'searching' && ride.status !== 'negotiating') throw new Error('Cuốc xe đã được chốt hoặc kết thúc');
+    if (!db.driverEarningModes.get(offer.driverId)?.isActive) throw new Error('Tài xế không còn bật Chế độ Kiếm Tiền');
 
     // Chốt cuốc xe
     ride.driverId = offer.driverId;
@@ -293,6 +416,12 @@ export class RidesService {
     db.rideRequests.set(rideId, ride);
     offer.status = 'accepted';
     db.rideOffers.set(offerId, offer);
+    for (const otherOffer of db.rideOffers.values()) {
+      if (otherOffer.rideId === rideId && otherOffer.id !== offerId && otherOffer.status === 'pending') {
+        otherOffer.status = 'rejected';
+        db.rideOffers.set(otherOffer.id, otherOffer);
+      }
+    }
 
     // Cập nhật trạng thái tài xế sang đang bận
     const driverMode = db.driverEarningModes.get(offer.driverId);
@@ -315,13 +444,11 @@ export class RidesService {
     return this.enrichRideDTO(ride);
   }
 
-  /**
-   * Cập nhật trạng thái chuyến đi (Tài xế di chuyển, đón, bắt đầu đi, hoàn thành)
-   */
+  /** Cập nhật trạng thái và gửi trạng thái mới cho cả hai bên qua gateway. */
   static updateRideStatus(
     userId: string,
     rideId: string,
-    status: 'picking_up' | 'in_trip' | 'completed' | 'cancelled'
+    status: RideStatus
   ): RideDTO {
     const ride = db.rideRequests.get(rideId);
     if (!ride) throw new Error('Chuyến đi không tồn tại');
@@ -329,8 +456,32 @@ export class RidesService {
     if (ride.passengerId !== userId && ride.driverId !== userId) {
       throw new Error('Bạn không có quyền thay đổi trạng thái chuyến này');
     }
+    const driverOnlyStatuses: RideStatus[] = ['picking_up', 'arrived', 'in_trip', 'completed'];
+    if (driverOnlyStatuses.includes(status) && ride.driverId !== userId) {
+      throw new Error('Chỉ tài xế đã nhận chuyến mới được cập nhật trạng thái này');
+    }
+    if (status === 'cancelled' && ride.status === 'completed') {
+      throw new Error('Chuyến đã hoàn thành không thể huỷ');
+    }
+
+    const validTransitions: Record<RideStatus, RideStatus[]> = {
+      searching: ['negotiating', 'cancelled'],
+      negotiating: ['accepted', 'cancelled'],
+      accepted: ['picking_up', 'cancelled'],
+      picking_up: ['arrived', 'cancelled'],
+      arrived: ['in_trip', 'cancelled'],
+      in_trip: ['completed', 'cancelled'],
+      completed: [],
+      cancelled: [],
+    };
+    if (ride.status !== status && !validTransitions[ride.status].includes(status)) {
+      throw new Error(`Không thể chuyển trạng thái từ ${ride.status} sang ${status}`);
+    }
 
     ride.status = status;
+    if (status === 'cancelled') {
+      ride.cancelledBy = ride.driverId === userId ? 'driver' : 'passenger';
+    }
     if (status === 'completed') {
       ride.completedAt = new Date();
       // Khôi phục tài xế về trạng thái rảnh rỗi và tăng số chuyến
@@ -352,10 +503,25 @@ export class RidesService {
     return this.enrichRideDTO(ride);
   }
 
-  /**
-   * Lấy danh sách các đề xuất giá cho một cuốc xe
-   */
-  static getRideOffers(rideId: string) {
+  /** Tài xế stream vị trí tới điểm đón; chỉ tài xế của cuốc được cập nhật. */
+  static updateDriverLocation(userId: string, rideId: string, lat: number, lon: number): RideDTO {
+    const ride = db.rideRequests.get(rideId);
+    if (!ride || ride.driverId !== userId) throw new Error('Bạn không có quyền cập nhật vị trí cho chuyến này');
+    if (!Number.isFinite(lat) || !Number.isFinite(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+      throw new Error('Toạ độ GPS không hợp lệ');
+    }
+    ride.driverLat = lat;
+    ride.driverLon = lon;
+    ride.driverLocationUpdatedAt = new Date();
+    db.rideRequests.set(rideId, ride);
+    return this.enrichRideDTO(ride);
+  }
+
+  /** Lấy danh sách các đề xuất giá cho một cuốc xe */
+  static getRideOffers(rideId: string, viewerId?: string) {
+    const ride = db.rideRequests.get(rideId);
+    if (!ride) throw new Error('Cuốc xe không tồn tại');
+    if (viewerId && ride.passengerId !== viewerId && ride.driverId !== viewerId) throw new Error('Bạn không có quyền xem báo giá của cuốc xe này');
     const offers = [];
     for (const off of db.rideOffers.values()) {
       if (off.rideId === rideId) {
@@ -391,7 +557,7 @@ export class RidesService {
     for (const r of db.rideRequests.values()) {
       if (
         (r.passengerId === userId || r.driverId === userId) &&
-        ['searching', 'negotiating', 'accepted', 'picking_up', 'in_trip'].includes(r.status)
+        ['searching', 'negotiating', 'accepted', 'picking_up', 'arrived', 'in_trip'].includes(r.status)
       ) {
         return this.enrichRideDTO(r);
       }

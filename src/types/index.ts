@@ -271,6 +271,8 @@ export interface DriverEarningMode {
   lastPingAt: Date;
 }
 
+export type RideStatus = 'searching' | 'negotiating' | 'accepted' | 'picking_up' | 'arrived' | 'in_trip' | 'completed' | 'cancelled';
+
 export interface RideRequest {
   id: string;
   passengerId: string;
@@ -283,12 +285,16 @@ export interface RideRequest {
   dropoffLon: number;
   distanceKm: number;
   estimatedMins: number;
+  routeProvider?: 'osrm' | 'estimate';
   vehicleType: 'motorbike' | 'car_4seats' | 'car_7seats';
   passengerNote?: string;
   suggestedPrice: number; // Giá khách đề xuất ban đầu (VNĐ)
   agreedPrice?: number; // Giá cuối cùng chốt thoả thuận (VNĐ)
-  status: 'searching' | 'negotiating' | 'accepted' | 'picking_up' | 'in_trip' | 'completed' | 'cancelled';
+  status: RideStatus;
   cancelledBy?: 'passenger' | 'driver' | 'timeout';
+  driverLat?: number;
+  driverLon?: number;
+  driverLocationUpdatedAt?: Date;
   insurancePolicyId?: string; // Mã hợp đồng bảo hiểm tai nạn nhúng (Embedded Insurance)
   createdAt: Date;
   completedAt?: Date;

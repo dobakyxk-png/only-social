@@ -38,8 +38,19 @@ const STATE = {
   driverEarningMode: false,
   activeRide: null,
   rideOffers: [],
+  rideOpenRequests: [],
+  selectedDriverRideId: null,
   ridePickupCoords: null,
   rideDropoffCoords: null,
+  rideEstimate: null,
+  ridePickMode: null,
+  rideStatusPollTimer: null,
+  rideEstimateRequestId: 0,
+  ridePickupMarker: null,
+  rideDropoffMarker: null,
+  rideDriverMarker: null,
+  rideRouteLine: null,
+  driverLocationWatchId: null,
 };
 
 // Khởi tạo icon Lucide
@@ -87,6 +98,7 @@ async function initApp() {
       loadFeed();
       loadNotifications();
       loadCheckinPins();
+      loadActiveRide();
     } catch (e) {
       console.warn('Token hết hạn, mở modal đăng nhập:', e);
       openAuthModal('register');
@@ -99,6 +111,7 @@ async function initApp() {
     loadNearbyUsers();
     loadFeed();
     loadCheckinPins();
+    loadActiveRide();
   }
 }
 
@@ -150,6 +163,14 @@ function initMap() {
   });
 
   STATE.userMarker = L.marker([STATE.currentLat, STATE.currentLon], { icon: userIcon }).addTo(STATE.map);
+
+  STATE.map.on('click', (event) => {
+    if (STATE.ridePickMode) {
+      setRideEndpoint(STATE.ridePickMode, event.latlng.lat, event.latlng.lng);
+      STATE.ridePickMode = null;
+      STATE.map.getContainer().classList.remove('ride-map-picking');
+    }
+  });
 
   // Vòng tròn thể hiện bán kính quét Radar
   STATE.radarCircle = L.circle([STATE.currentLat, STATE.currentLon], {
@@ -723,6 +744,11 @@ function handleIncomingNotification(notification) {
 
   // Hiển thị thông báo Toast nhanh góc màn hình
   console.log('[Push Alert]:', notification.title, notification.body);
+  const rideId = notification.data?.rideId || notification.payloadData?.rideId;
+  if (rideId && STATE.driverEarningMode) {
+    loadOpenRideRequests();
+    showToast(`🔔 ${notification.title}`, 'info');
+  }
 }
 
 // ------------------------------------------------------------------------------
@@ -806,6 +832,38 @@ function connectSocket() {
   // Lỗi cuộc gọi
   STATE.socket.on('call:error', (err) => {
     alert(err.message || 'Lỗi cuộc gọi');
+  });
+
+  // ONLY RIDE realtime: trạng thái, vị trí tài xế và lỗi kết nối
+  STATE.socket.on('ride:status_changed', (payload) => {
+    if (payload?.ride && (!STATE.activeRide || payload.ride.id === STATE.activeRide.id)) {
+      STATE.activeRide = payload.ride;
+      renderActiveRide();
+      if (STATE.activeRide.status === 'completed' || STATE.activeRide.status === 'cancelled') {
+        stopDriverLocationWatch();
+      }
+      renderRideMap();
+    }
+  });
+
+  STATE.socket.on('ride:driver_moved', (payload) => {
+    if (!STATE.activeRide || payload?.rideId !== STATE.activeRide.id) return;
+    STATE.activeRide.driverLat = payload.lat;
+    STATE.activeRide.driverLon = payload.lon;
+    renderRideMap();
+    updateRideStatusLive(`Tài xế đã cập nhật vị trí lúc ${formatTimeAgo(payload.updatedAt || new Date())}`);
+  });
+
+  STATE.socket.on('ride:alert', (payload) => {
+    if (payload?.rideId && (!STATE.activeRide || payload.rideId === STATE.activeRide.id)) {
+      showToast(payload.message || 'Có cập nhật chuyến đi', 'info');
+      loadActiveRide();
+    }
+  });
+
+  STATE.socket.on('ride:error', (payload) => {
+    updateRideStatusLive(payload?.message || 'Không thể đồng bộ chuyến đi', true);
+    showToast(payload?.message || 'Lỗi chuyến đi', 'error');
   });
 }
 
@@ -1734,6 +1792,9 @@ function switchTab(tabKey) {
   // Tải dữ liệu tương ứng
   if (tabKey === 'radar') {
     loadNearbyUsers();
+  } else if (tabKey === 'ride') {
+    loadActiveRide();
+    if (STATE.driverEarningMode) loadOpenRideRequests();
   } else if (tabKey === 'feed') {
     loadFeed();
   } else if (tabKey === 'messages') {
@@ -1753,7 +1814,8 @@ function switchTab(tabKey) {
 function setupEventListeners() {
   // Bắt sự kiện 5 Tab Desktop
   document.getElementById('tabRadar').onclick = () => switchTab('radar');
-  document.getElementById('tabRide')?.addEventListener('click', () => switchTab('ride'));
+  const desktopRideTab = document.getElementById('tabRide');
+  if (desktopRideTab) desktopRideTab.addEventListener('click', () => switchTab('ride'));
   document.getElementById('tabFeed').onclick = () => switchTab('feed');
   document.getElementById('tabMessages').onclick = () => switchTab('messages');
   document.getElementById('tabFriends').onclick = () => switchTab('friends');
@@ -1786,7 +1848,8 @@ function setupEventListeners() {
 
   // Bắt sự kiện 5 Tab Mobile Bottom Navigation Bar
   document.getElementById('mobileTabRadar').onclick = () => switchTab('radar');
-  document.getElementById('mobileTabRide')?.onclick = () => switchTab('ride');
+  const mobileRideTab = document.getElementById('mobileTabRide');
+  if (mobileRideTab) mobileRideTab.onclick = () => switchTab('ride');
   document.getElementById('mobileTabFeed').onclick = () => switchTab('feed');
   document.getElementById('mobileTabMessages').onclick = () => switchTab('messages');
   document.getElementById('mobileTabFriends').onclick = () => switchTab('friends');
@@ -1806,6 +1869,28 @@ function setupEventListeners() {
       nearbySheet.classList.add('translate-y-full');
     };
   }
+
+  // Ride endpoint selection, current location and estimate
+  const pickPickupBtn = document.getElementById('btnPickRidePickup');
+  if (pickPickupBtn) pickPickupBtn.addEventListener('click', () => beginRideMapPick('pickup'));
+  const pickDropoffBtn = document.getElementById('btnPickRideDropoff');
+  if (pickDropoffBtn) pickDropoffBtn.addEventListener('click', () => beginRideMapPick('dropoff'));
+  const currentPickupBtn = document.getElementById('btnUseCurrentRidePickup');
+  if (currentPickupBtn) currentPickupBtn.addEventListener('click', useCurrentRidePickup);
+  const rideVehicle = document.getElementById('selectRideVehicle');
+  if (rideVehicle) rideVehicle.addEventListener('change', requestRideEstimate);
+  const ridePickupInput = document.getElementById('inputRidePickup');
+  if (ridePickupInput) ridePickupInput.addEventListener('input', () => {
+    if (STATE.ridePickupCoords) requestRideEstimate();
+  });
+  const rideDropoffInput = document.getElementById('inputRideDropoff');
+  if (rideDropoffInput) rideDropoffInput.addEventListener('input', () => {
+    if (STATE.rideDropoffCoords) requestRideEstimate();
+  });
+  const refreshRideRequestsBtn = document.getElementById('btnRefreshRideRequests');
+  if (refreshRideRequestsBtn) refreshRideRequestsBtn.addEventListener('click', loadOpenRideRequests);
+  const submitOfferBtn = document.getElementById('btnSubmitDriverOffer');
+  if (submitOfferBtn) submitOfferBtn.addEventListener('click', submitDriverOffer);
 
   // Tự động căn chỉnh lại map khi xoay màn hình điện thoại hoặc đổi kích thước
   window.addEventListener('resize', () => {
@@ -2148,122 +2233,450 @@ async function toggleDriverEarningMode(isActive) {
   try {
     const vehicleType = document.getElementById('driverVehicleType')?.value || 'motorbike';
     const vehiclePlate = document.getElementById('driverVehiclePlate')?.value || '';
-    
-    const res = await apiRequest('/rides/earning-mode', 'POST', {
+    await apiRequest('/rides/earning-mode', 'POST', {
       isActive,
       vehicleType,
       licensePlate: vehiclePlate,
     });
 
     STATE.driverEarningMode = isActive;
-    
     const configBox = document.getElementById('driverConfigBox');
+    const discovery = document.getElementById('driverRequestDiscovery');
     if (isActive) {
-      configBox.classList.remove('hidden');
-      configBox.classList.add('flex');
-      showToast('🟢 Đã bật Chế độ Kiếm Tiền! Bạn sẽ nhận chuông khi có cuốc xe quanh đây.', 'success');
+      configBox?.classList.remove('hidden');
+      configBox?.classList.add('flex');
+      discovery?.classList.remove('hidden');
+      showToast('🟢 Đã bật Chế độ Kiếm Tiền! Đang tải cuốc xe phù hợp.', 'success');
+      loadOpenRideRequests();
     } else {
-      configBox.classList.add('hidden');
+      configBox?.classList.add('hidden');
+      discovery?.classList.add('hidden');
+      document.getElementById('driverRideActionBox')?.classList.add('hidden');
+      STATE.rideOpenRequests = [];
+      STATE.selectedDriverRideId = null;
       showToast('Đã tắt Chế độ Kiếm Tiền', 'info');
     }
   } catch (err) {
     showToast(err.message, 'error');
-    document.getElementById('driverEarningToggle').checked = false;
+    const toggle = document.getElementById('driverEarningToggle');
+    if (toggle) toggle.checked = false;
   }
+}
+
+async function loadActiveRide() {
+  if (!STATE.token) return;
+  try {
+    const res = await apiRequest('/rides/active');
+    STATE.activeRide = res.data || null;
+    if (STATE.activeRide) {
+      STATE.ridePickupCoords = { lat: STATE.activeRide.pickupLat, lon: STATE.activeRide.pickupLon };
+      STATE.rideDropoffCoords = { lat: STATE.activeRide.dropoffLat, lon: STATE.activeRide.dropoffLon };
+      document.getElementById('inputRidePickup').value = STATE.activeRide.pickupName;
+      document.getElementById('inputRideDropoff').value = STATE.activeRide.dropoffName;
+      renderActiveRide();
+      loadRideOffers();
+    } else {
+      renderActiveRide();
+    }
+  } catch (err) {
+    updateRideStatusLive(`Không thể tải chuyến đang hoạt động: ${err.message}`, true);
+  }
+}
+
+async function loadRideOffers() {
+  if (!STATE.activeRide) return;
+  try {
+    const res = await apiRequest(`/rides/${STATE.activeRide.id}/offers`);
+    STATE.rideOffers = res.data || [];
+    if (STATE.activeRide.status === 'searching' && STATE.rideOffers.length) STATE.activeRide.status = 'negotiating';
+    renderRideOffers();
+    renderActiveRide();
+  } catch (err) {
+    const list = document.getElementById('listDriverOffers');
+    if (list) list.innerHTML = `<div class="text-center py-4 text-xs text-rose-400">${err.message}</div>`;
+  }
+}
+
+async function loadOpenRideRequests() {
+  const panel = document.getElementById('driverRequestDiscovery');
+  const status = document.getElementById('driverRequestStatus');
+  const list = document.getElementById('listOpenRideRequests');
+  if (!panel || !list || !STATE.driverEarningMode) return;
+  panel.classList.remove('hidden');
+  if (status) status.textContent = 'Đang tìm cuốc xe phù hợp...';
+  list.innerHTML = '<div class="text-center py-4 text-xs text-slate-500">Đang tải...</div>';
+  try {
+    // GET /rides/active returns the authenticated user ride only; notifications carry open ride ids.
+    const notifiedIds = STATE.notifications.map((n) => n.data?.rideId).filter(Boolean);
+    const requests = [];
+    for (const rideId of notifiedIds) {
+      try {
+        const response = await apiRequest(`/rides/${rideId}/offers`);
+        const ride = response.ride || response.data?.ride;
+        if (ride && ['searching', 'negotiating'].includes(ride.status)) requests.push(ride);
+      } catch (err) {
+        // A driver may not be authorized to read another passenger's offers; keep discovery usable.
+      }
+    }
+    STATE.rideOpenRequests = requests.filter((ride, index, arr) => arr.findIndex((item) => item.id === ride.id) === index);
+    renderOpenRideRequests();
+    if (status) status.textContent = STATE.rideOpenRequests.length ? `${STATE.rideOpenRequests.length} cuốc đang chờ báo giá` : 'Chưa có cuốc mới. Bạn sẽ nhận thông báo khi có cuốc phù hợp.';
+  } catch (err) {
+    if (status) status.textContent = err.message;
+    list.innerHTML = `<div class="text-center py-4 text-xs text-rose-400">${err.message}</div>`;
+  }
+}
+
+function renderOpenRideRequests() {
+  const list = document.getElementById('listOpenRideRequests');
+  if (!list) return;
+  list.innerHTML = '';
+  if (!STATE.rideOpenRequests.length) {
+    list.innerHTML = '<div class="text-center py-4 text-xs text-slate-500">Chưa có cuốc xe mở.</div>';
+    return;
+  }
+  STATE.rideOpenRequests.forEach((ride) => {
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'w-full text-left min-h-16 p-2.5 rounded-xl bg-slate-800/70 hover:bg-slate-800 border border-slate-700/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300';
+    card.innerHTML = `<span class="block text-xs font-bold text-slate-100">${ride.pickupName} → ${ride.dropoffName}</span><span class="block text-[10px] text-slate-400">${ride.distanceKm} km · khách đề xuất ${formatMoney(ride.suggestedPrice)} · ${RIDE_STATUS_META[ride.status]?.label || ride.status}</span>`;
+    card.onclick = () => selectDriverRide(ride);
+    list.appendChild(card);
+  });
+}
+
+function selectDriverRide(ride) {
+  STATE.selectedDriverRideId = ride.id;
+  const box = document.getElementById('driverRideActionBox');
+  box?.classList.remove('hidden');
+  document.getElementById('driverRideDistanceLabel').textContent = `${ride.distanceKm} km · ${formatMoney(ride.suggestedPrice)}`;
+  document.getElementById('driverRideRouteLabel').textContent = `${ride.pickupName} → ${ride.dropoffName}`;
+  document.getElementById('driverOfferPrice').value = ride.suggestedPrice || '';
+  document.getElementById('driverOfferEta').value = '5';
+  document.getElementById('driverOfferStatus').textContent = '';
+  STATE.map?.fitBounds([[ride.pickupLat, ride.pickupLon], [ride.dropoffLat, ride.dropoffLon]], { padding: [40, 40], maxZoom: 15 });
+}
+
+async function submitDriverOffer() {
+  const rideId = STATE.selectedDriverRideId;
+  const status = document.getElementById('driverOfferStatus');
+  const offeredPrice = Number(document.getElementById('driverOfferPrice').value);
+  const estimatedPickupMins = Number(document.getElementById('driverOfferEta').value);
+  const note = document.getElementById('driverOfferNote').value.trim();
+  if (!rideId || !offeredPrice || offeredPrice <= 0 || !estimatedPickupMins || estimatedPickupMins <= 0) {
+    if (status) status.textContent = 'Nhập giá báo và thời gian đến đón hợp lệ.';
+    return;
+  }
+  if (status) status.textContent = 'Đang gửi báo giá...';
+  try {
+    await apiRequest(`/rides/${rideId}/offer`, 'POST', { offeredPrice, estimatedPickupMins, note });
+    if (status) status.textContent = 'Đã gửi báo giá cho khách.';
+    showToast('✅ Đã gửi báo giá cho khách', 'success');
+    STATE.rideOpenRequests = STATE.rideOpenRequests.filter((ride) => ride.id !== rideId);
+    STATE.selectedDriverRideId = null;
+    document.getElementById('driverRideActionBox')?.classList.add('hidden');
+    renderOpenRideRequests();
+  } catch (err) {
+    if (status) status.textContent = err.message;
+    showToast(err.message, 'error');
+  }
+}
+
+function startDriverLocationWatch() {
+  const isDriver = STATE.activeRide?.driver?.userId === STATE.currentUser?.id;
+  if (!isDriver || STATE.driverLocationWatchId !== null || !navigator.geolocation || !STATE.activeRide) return;
+  STATE.driverLocationWatchId = navigator.geolocation.watchPosition((position) => {
+    const payload = { rideId: STATE.activeRide.id, lat: position.coords.latitude, lon: position.coords.longitude };
+    if (STATE.socket?.connected) STATE.socket.emit('ride:driver_loc', payload);
+    else apiRequest(`/rides/${STATE.activeRide.id}/driver-location`, 'POST', { lat: payload.lat, lon: payload.lon }).catch(() => {});
+  }, () => updateRideStatusLive('Không thể lấy vị trí tài xế trên thiết bị.', true), { enableHighAccuracy: true, maximumAge: 5000 });
+}
+
+function stopDriverLocationWatch() {
+  if (STATE.driverLocationWatchId !== null && navigator.geolocation) navigator.geolocation.clearWatch(STATE.driverLocationWatchId);
+  STATE.driverLocationWatchId = null;
+}
+
+function updateRideStatusLive(message, isError = false) {
+  const el = document.getElementById('rideLiveStatus');
+  if (el) {
+    el.textContent = message || '';
+    el.className = `min-h-4 text-[10px] ${isError ? 'text-rose-400' : 'text-slate-400'}`;
+  }
+}
+
+function setRideEndpoint(kind, lat, lon) {
+  const coords = { lat: Number(lat), lon: Number(lon) };
+  const input = document.getElementById(kind === 'pickup' ? 'inputRidePickup' : 'inputRideDropoff');
+  if (kind === 'pickup') {
+    STATE.ridePickupCoords = coords;
+    if (!input.value.trim()) input.value = 'Điểm đón trên bản đồ';
+  } else {
+    STATE.rideDropoffCoords = coords;
+    if (!input.value.trim()) input.value = 'Điểm đến trên bản đồ';
+  }
+  renderRideEndpointMarkers();
+  updateRideRouteHint();
+  requestRideEstimate();
+}
+
+function beginRideMapPick(kind) {
+  STATE.ridePickMode = kind;
+  switchTab('ride');
+  STATE.map?.getContainer().classList.add('ride-map-picking');
+  updateRideStatusLive(kind === 'pickup' ? 'Đang chọn điểm đón: chạm vào bản đồ.' : 'Đang chọn điểm đến: chạm vào bản đồ.');
+  showToast(kind === 'pickup' ? 'Chạm bản đồ để đặt điểm đón' : 'Chạm bản đồ để đặt điểm đến', 'info');
+}
+
+function useCurrentRidePickup() {
+  setRideEndpoint('pickup', STATE.currentLat, STATE.currentLon);
+  const input = document.getElementById('inputRidePickup');
+  if (input) input.value = 'Vị trí hiện tại của tôi';
+  STATE.map?.setView([STATE.currentLat, STATE.currentLon], Math.max(STATE.map.getZoom(), 14));
+}
+
+function updateRideRouteHint() {
+  const hint = document.getElementById('rideRouteHint');
+  if (!hint) return;
+  const pickup = STATE.ridePickupCoords ? 'điểm đón ✓' : 'điểm đón chưa chọn';
+  const dropoff = STATE.rideDropoffCoords ? 'điểm đến ✓' : 'điểm đến chưa chọn';
+  hint.textContent = `${pickup} · ${dropoff}. ${STATE.ridePickupCoords && STATE.rideDropoffCoords ? 'Đang tính lộ trình thực tế.' : 'Chọn cả hai trên bản đồ.'}`;
+}
+
+function renderRideEndpointMarkers() {
+  if (!STATE.map) return;
+  if (STATE.ridePickupMarker) STATE.map.removeLayer(STATE.ridePickupMarker);
+  if (STATE.rideDropoffMarker) STATE.map.removeLayer(STATE.rideDropoffMarker);
+  const endpointIcon = (color, label) => L.divIcon({
+    className: 'ride-endpoint-icon',
+    html: `<span style="--ride-marker-color:${color}" aria-label="${label}"></span>`,
+    iconSize: [26, 26],
+    iconAnchor: [13, 13],
+  });
+  if (STATE.ridePickupCoords) STATE.ridePickupMarker = L.marker([STATE.ridePickupCoords.lat, STATE.ridePickupCoords.lon], { icon: endpointIcon('#34d399', 'Điểm đón') }).addTo(STATE.map);
+  if (STATE.rideDropoffCoords) STATE.rideDropoffMarker = L.marker([STATE.rideDropoffCoords.lat, STATE.rideDropoffCoords.lon], { icon: endpointIcon('#fb7185', 'Điểm đến') }).addTo(STATE.map);
+  if (STATE.ridePickupCoords && STATE.rideDropoffCoords) {
+    STATE.map.fitBounds([[STATE.ridePickupCoords.lat, STATE.ridePickupCoords.lon], [STATE.rideDropoffCoords.lat, STATE.rideDropoffCoords.lon]], { padding: [40, 40], maxZoom: 15 });
+  }
+}
+
+function renderRideMap() {
+  renderRideEndpointMarkers();
+  if (STATE.rideRouteLine) STATE.map?.removeLayer(STATE.rideRouteLine);
+  if (STATE.activeRide?.pickupLat && STATE.activeRide?.dropoffLat && STATE.map) {
+    const points = [[STATE.activeRide.pickupLat, STATE.activeRide.pickupLon], [STATE.activeRide.dropoffLat, STATE.activeRide.dropoffLon]];
+    STATE.rideRouteLine = L.polyline(points, { color: '#f59e0b', weight: 4, opacity: 0.75, dashArray: '8 8' }).addTo(STATE.map);
+  }
+  if (STATE.rideDriverMarker) STATE.map?.removeLayer(STATE.rideDriverMarker);
+  if (Number.isFinite(STATE.activeRide?.driverLat) && Number.isFinite(STATE.activeRide?.driverLon) && STATE.map) {
+    const driverIcon = L.divIcon({ className: 'ride-driver-icon', html: '<span aria-label="Vị trí tài xế">🚗</span>', iconSize: [34, 34], iconAnchor: [17, 17] });
+    STATE.rideDriverMarker = L.marker([STATE.activeRide.driverLat, STATE.activeRide.driverLon], { icon: driverIcon }).addTo(STATE.map);
+  }
+}
+
+async function requestRideEstimate() {
+  if (!STATE.ridePickupCoords || !STATE.rideDropoffCoords || !STATE.token) {
+    updateRideRouteHint();
+    return;
+  }
+  const requestId = ++STATE.rideEstimateRequestId;
+  const status = document.getElementById('rideEstimateStatus');
+  if (status) status.textContent = 'Đang tính khoảng cách, ETA và giá...';
+  try {
+    const res = await apiRequest('/rides/estimate', 'POST', {
+      pickupLat: STATE.ridePickupCoords.lat,
+      pickupLon: STATE.ridePickupCoords.lon,
+      dropoffLat: STATE.rideDropoffCoords.lat,
+      dropoffLon: STATE.rideDropoffCoords.lon,
+      vehicleType: document.getElementById('selectRideVehicle').value,
+    });
+    if (requestId !== STATE.rideEstimateRequestId) return;
+    STATE.rideEstimate = res.data;
+    document.getElementById('rideEstimateInfo').textContent = `${res.data.distanceKm} km · khoảng ${res.data.estimatedMins} phút`;
+    document.getElementById('rideEstimateRange').textContent = `${formatMoney(res.data.priceRange.min)} – ${formatMoney(res.data.priceRange.max)}`;
+    const price = document.getElementById('inputRidePrice');
+    if (price && !price.value) price.value = res.data.suggestedPrice;
+    if (status) status.textContent = 'Đã cập nhật theo dữ liệu máy chủ.';
+  } catch (err) {
+    if (status) status.textContent = `Không thể tính lộ trình: ${err.message}`;
+  }
+}
+
+function formatMoney(value) {
+  return `${Number(value || 0).toLocaleString('vi-VN')}đ`;
 }
 
 // Tạo yêu cầu di chuyển / Đặt cuốc xe
 async function handleCreateRideRequest() {
+  const actionStatus = document.getElementById('rideActionStatus');
   try {
     if (!STATE.token) {
       showToast('Vui lòng đăng nhập để sử dụng tính năng Đi Lại', 'error');
       return;
     }
-
-    const pickupInput = document.getElementById('inputRidePickup').value.trim();
-    const dropoffInput = document.getElementById('inputRideDropoff').value.trim();
-    const vehicleType = document.getElementById('selectRideVehicle').value;
-    const suggestedPrice = parseInt(document.getElementById('inputRidePrice').value, 10) || 0;
-
-    if (!dropoffInput) {
-      showToast('Vui lòng nhập điểm đến', 'error');
+    if (!STATE.ridePickupCoords || !STATE.rideDropoffCoords) {
+      const missing = !STATE.ridePickupCoords ? 'điểm đón' : 'điểm đến';
+      updateRideStatusLive(`Cần chọn ${missing} trên bản đồ trước khi đặt chuyến.`, true);
+      showToast(`Vui lòng chọn ${missing} có tọa độ`, 'error');
       return;
     }
 
-    const pickupLat = STATE.ridePickupCoords?.lat || STATE.currentLat;
-    const pickupLon = STATE.ridePickupCoords?.lon || STATE.currentLon;
-    const pickupName = pickupInput || 'Vị trí hiện tại của tôi';
-
-    // Giả sử dropoff được nhập thủ công, sử dụng toạ độ mẫu cách 3km
-    const dropoffLat = STATE.rideDropoffCoords?.lat || (STATE.currentLat + 0.027);
-    const dropoffLon = STATE.rideDropoffCoords?.lon || (STATE.currentLon + 0.027);
-    const dropoffName = dropoffInput;
-
+    const pickupName = document.getElementById('inputRidePickup').value.trim() || 'Điểm đón trên bản đồ';
+    const dropoffName = document.getElementById('inputRideDropoff').value.trim() || 'Điểm đến trên bản đồ';
+    const vehicleType = document.getElementById('selectRideVehicle').value;
+    const suggestedPrice = parseInt(document.getElementById('inputRidePrice').value, 10) || STATE.rideEstimate?.suggestedPrice || 0;
+    if (!suggestedPrice) {
+      await requestRideEstimate();
+    }
+    if (actionStatus) actionStatus.textContent = 'Đang gửi yêu cầu chuyến đi...';
     const res = await apiRequest('/rides/request', 'POST', {
       pickupName,
-      pickupLat,
-      pickupLon,
+      pickupLat: STATE.ridePickupCoords.lat,
+      pickupLon: STATE.ridePickupCoords.lon,
       dropoffName,
-      dropoffLat,
-      dropoffLon,
+      dropoffLat: STATE.rideDropoffCoords.lat,
+      dropoffLon: STATE.rideDropoffCoords.lon,
       vehicleType,
-      suggestedPrice,
+      suggestedPrice: parseInt(document.getElementById('inputRidePrice').value, 10) || STATE.rideEstimate?.suggestedPrice || 0,
     });
 
     STATE.activeRide = res.data;
-    showToast('🛵 Đã phát tín hiệu tìm xe! Đang quét tài xế quanh đây...', 'success');
+    STATE.rideOffers = [];
+    showToast('🛵 Đã phát tín hiệu tìm xe! Đang chờ tài xế...', 'success');
+    if (actionStatus) actionStatus.textContent = 'Đã gửi yêu cầu. Bạn sẽ nhận cập nhật realtime.';
     renderActiveRide();
     pollRideOffers();
   } catch (err) {
+    if (actionStatus) actionStatus.textContent = err.message;
     showToast(err.message, 'error');
   }
 }
 
-// Hiển thị UI cuốc xe đang hoạt động
+const RIDE_STATUS_META = {
+  searching: { label: 'Đang tìm tài xế', detail: 'Yêu cầu đã được phát tới tài xế phù hợp', color: 'emerald' },
+  negotiating: { label: 'Đang thương lượng', detail: 'Có báo giá mới để bạn lựa chọn', color: 'amber' },
+  accepted: { label: 'Đã nhận chuyến', detail: 'Tài xế đang chuẩn bị tới điểm đón', color: 'sky' },
+  picking_up: { label: 'Tài xế đang đến đón', detail: 'Theo dõi vị trí tài xế trên bản đồ', color: 'sky' },
+  arrived: { label: 'Tài xế đã đến', detail: 'Vui lòng ra điểm đón để bắt đầu chuyến', color: 'violet' },
+  in_trip: { label: 'Đang trong chuyến', detail: 'Chúc bạn thượng lộ bình an', color: 'emerald' },
+  completed: { label: 'Đã hoàn thành', detail: 'Chuyến đi đã kết thúc', color: 'slate' },
+  cancelled: { label: 'Đã huỷ', detail: 'Chuyến đi không còn hoạt động', color: 'rose' },
+};
+const RIDE_STATUS_ORDER = ['searching', 'negotiating', 'accepted', 'picking_up', 'arrived', 'in_trip', 'completed'];
+
+function renderRideStatusTimeline(status) {
+  const el = document.getElementById('rideStatusTimeline');
+  if (!el) return;
+  if (status === 'cancelled') {
+    el.innerHTML = '<span class="ride-status-step is-cancelled">✕ Đã huỷ chuyến</span>';
+    return;
+  }
+  if (status === 'completed') {
+    el.innerHTML = '<span class="ride-status-step is-done"><span class="ride-status-marker">✓</span>Đã hoàn thành</span>';
+    return;
+  }
+  const currentIndex = RIDE_STATUS_ORDER.indexOf(status);
+  el.innerHTML = RIDE_STATUS_ORDER.map((key, index) => {
+    const meta = RIDE_STATUS_META[key];
+    const cls = index < currentIndex ? 'is-done' : index === currentIndex ? 'is-current' : '';
+    return `<span class="ride-status-step ${cls}"><span class="ride-status-marker">${index < currentIndex ? '✓' : index + 1}</span>${meta.label}</span>`;
+  }).join('');
+}
+
+function renderRideStatusActions() {
+  const actions = document.getElementById('rideStatusActions');
+  if (!actions || !STATE.activeRide) return;
+  const ride = STATE.activeRide;
+  const isDriver = ride.driver?.userId && ride.driver.userId === STATE.currentUser?.id;
+  const next = isDriver ? ({ accepted: 'picking_up', picking_up: 'arrived', arrived: 'in_trip', in_trip: 'completed' }[ride.status]) : null;
+  actions.innerHTML = '';
+  if (next) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'min-h-11 px-3 rounded-xl bg-sky-500 hover:bg-sky-600 text-slate-950 text-xs font-bold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300';
+    button.textContent = `Cập nhật: ${RIDE_STATUS_META[next].label}`;
+    button.onclick = () => updateRideStatus(next);
+    actions.appendChild(button);
+    actions.classList.remove('hidden');
+  } else {
+    actions.classList.add('hidden');
+  }
+}
+
+function updateRideStatus(status) {
+  if (!STATE.activeRide) return;
+  if (STATE.socket?.connected) {
+    STATE.socket.emit('ride:status_update', { rideId: STATE.activeRide.id, status });
+    updateRideStatusLive('Đang đồng bộ trạng thái...');
+  } else {
+    apiRequest(`/rides/${STATE.activeRide.id}/status`, 'POST', { status }).then((res) => {
+      STATE.activeRide = res.data;
+      renderActiveRide();
+    }).catch((err) => updateRideStatusLive(err.message, true));
+  }
+}
+
 function renderActiveRide() {
   const container = document.getElementById('activeRideContainer');
+  if (!container) return;
   if (!STATE.activeRide) {
     container.classList.add('hidden');
+    clearTimeout(STATE.rideStatusPollTimer);
     return;
   }
 
   container.classList.remove('hidden');
+  const ride = STATE.activeRide;
+  const meta = RIDE_STATUS_META[ride.status] || RIDE_STATUS_META.searching;
   const statusText = document.getElementById('activeRideStatusText');
   const detailText = document.getElementById('activeRideDetailText');
+  if (statusText) statusText.textContent = meta.label;
+  if (detailText) detailText.textContent = `${ride.pickupName} → ${ride.dropoffName} · ${ride.distanceKm} km · ${meta.detail}`;
+  const dot = document.getElementById('activeRideStatusDot');
+  if (dot) dot.className = `w-3 h-3 rounded-full shrink-0 ${ride.status === 'cancelled' ? 'bg-rose-400' : ride.status === 'completed' ? 'bg-slate-400' : 'bg-emerald-400 animate-ping'}`;
+  renderRideStatusTimeline(ride.status);
+  renderRideStatusActions();
 
-  if (STATE.activeRide.status === 'searching') {
-    statusText.innerText = 'Đang tìm xe quanh đây...';
-    detailText.innerText = `${STATE.activeRide.pickupName} → ${STATE.activeRide.dropoffName} (~${STATE.activeRide.distanceKm}km)`;
-  } else if (STATE.activeRide.status === 'negotiating') {
-    statusText.innerText = `Có ${STATE.activeRide.offersCount} tài xế gửi báo giá!`;
-    detailText.innerText = 'Chọn tài xế ưng ý nhất để chốt chuyến';
-  } else if (STATE.activeRide.status === 'accepted') {
-    statusText.innerText = '🎉 Đã chốt tài xế! Đang đến đón bạn...';
-    detailText.innerText = `Tài xế: ${STATE.activeRide.driver?.fullName} - ${STATE.activeRide.driver?.licensePlate}`;
+  const insurance = document.getElementById('rideInsuranceInfo');
+  if (insurance && ride.insurancePolicyId) {
+    insurance.textContent = `🛡️ Bảo hiểm chuyến đi đã kích hoạt · Mã: ${ride.insurancePolicyId}`;
+    insurance.classList.remove('hidden');
   }
+  const driverInfo = document.getElementById('rideDriverLocationInfo');
+  if (driverInfo && Number.isFinite(ride.driverLat) && Number.isFinite(ride.driverLon)) {
+    driverInfo.textContent = `🚗 Vị trí tài xế: ${ride.driverLat.toFixed(5)}, ${ride.driverLon.toFixed(5)} · cập nhật ${formatTimeAgo(ride.driverLocationUpdatedAt || new Date())}`;
+    driverInfo.classList.remove('hidden');
+  }
+  renderRideMap();
+  if (ride.status === 'accepted' || ride.status === 'picking_up' || ride.status === 'arrived' || ride.status === 'in_trip') startDriverLocationWatch();
+  else stopDriverLocationWatch();
+  if (ride.status === 'searching' || ride.status === 'negotiating') pollRideOffers();
 }
 
 // Poll danh sách báo giá từ tài xế
 async function pollRideOffers() {
-  if (!STATE.activeRide || STATE.activeRide.status === 'accepted') return;
+  if (!STATE.activeRide || !['searching', 'negotiating'].includes(STATE.activeRide.status)) return;
 
   try {
-    const res = await apiRequest(`/rides/${STATE.activeRide.id}/offers`, 'GET');
-    STATE.rideOffers = res.data || [];
-    renderRideOffers();
-
-    // Tiếp tục poll mỗi 3 giây
-    setTimeout(pollRideOffers, 3000);
+    await loadRideOffers();
+    const active = await apiRequest('/rides/active');
+    if (active.data && active.data.id === STATE.activeRide.id) {
+      STATE.activeRide = active.data;
+      renderActiveRide();
+    }
+    clearTimeout(STATE.rideStatusPollTimer);
+    STATE.rideStatusPollTimer = setTimeout(pollRideOffers, 4000);
   } catch (err) {
-    console.error('Lỗi khi poll ride offers:', err);
+    updateRideStatusLive(`Không thể tải báo giá: ${err.message}`, true);
   }
 }
 
 // Render danh sách tài xế báo giá
 function renderRideOffers() {
   const listEl = document.getElementById('listDriverOffers');
+  if (!listEl) return;
   if (!STATE.rideOffers || STATE.rideOffers.length === 0) {
-    listEl.innerHTML = '<div class="text-center py-6 text-xs text-slate-500">Đang chờ tài xế gửi đề xuất giá...</div>';
+    listEl.innerHTML = `<div class="text-center py-6 text-xs text-slate-500">${STATE.activeRide?.status === 'negotiating' ? 'Đang tải báo giá từ tài xế...' : 'Đang chờ tài xế gửi đề xuất giá...'}</div>`;
     return;
   }
 

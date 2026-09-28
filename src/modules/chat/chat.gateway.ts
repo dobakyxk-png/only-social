@@ -6,6 +6,7 @@ import { LocationService } from '../location/location.service';
 import { db } from '../../database/data-store';
 import { registerSocketNotificationEmitter } from '../notifications/notifications.service';
 import { CallingService } from '../calling/calling.service';
+import { RidesService } from '../rides/rides.service';
 
 export function setupSocketGateway(io: Server) {
   // Đăng ký bộ phát thông báo thời gian thực qua WebSocket
@@ -244,13 +245,21 @@ export function setupSocketGateway(io: Server) {
     // 7. GIAI ĐOẠN 4: ONLY RIDE - KẾT NỐI ĐI LẠI & THỎA THUẬN GIÁ REALTIME
     // Tài xế cập nhật vị trí GPS khi đang di chuyển tới đón khách
     socket.on('ride:driver_loc', (data: { rideId: string; lat: number; lon: number }) => {
-      const ride = db.rideRequests.get(data.rideId);
-      if (ride && ride.driverId === userId) {
-        io.to(`user:${ride.passengerId}`).emit('ride:driver_moved', {
-          rideId: data.rideId,
-          lat: data.lat,
-          lon: data.lon,
-        });
+      try {
+        const ride = RidesService.updateDriverLocation(userId, data.rideId, Number(data.lat), Number(data.lon));
+        io.to(`user:${ride.passengerId}`).emit('ride:driver_moved', { rideId: data.rideId, lat: ride.driverLat, lon: ride.driverLon, updatedAt: ride.driverLocationUpdatedAt });
+      } catch (err: any) {
+        socket.emit('ride:error', { message: err.message });
+      }
+    });
+
+    socket.on('ride:status_update', (data: { rideId: string; status: any }) => {
+      try {
+        const ride = RidesService.updateRideStatus(userId, data.rideId, data.status);
+        const recipients = [ride.passengerId, ride.driverId].filter(Boolean) as string[];
+        recipients.forEach((recipientId) => io.to(`user:${recipientId}`).emit('ride:status_changed', { ride }));
+      } catch (err: any) {
+        socket.emit('ride:error', { message: err.message });
       }
     });
 
