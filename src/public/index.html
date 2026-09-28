@@ -3,6 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#071426">
+  <meta name="application-name" content="Only">
+  <link rel="icon" type="image/png" href="/only-brand-logo.png">
+  <link rel="apple-touch-icon" href="/only-brand-logo.png">
   <title>ONLY - Mạng Xã Hội Kết Nối Vị Trí Thực Tế</title>
   
   <!-- Tailwind CSS CDN -->
@@ -36,24 +40,22 @@
   <script src="https://unpkg.com/lucide@latest"></script>
 
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="brand.css">
 </head>
 <body class="bg-slate-950 text-slate-100 flex flex-col h-[100dvh] overflow-hidden font-sans select-none">
 
   <!-- TOP NAVBAR (TỐI ƯU GỌN GÀNG TRÊN MỌI MÀN HÌNH ĐIỆN THOẠI) -->
   <header class="bg-slate-900/95 backdrop-blur border-b border-slate-800 px-3 sm:px-4 py-2 flex items-center justify-between z-20 shrink-0">
-    <!-- Brand Logo -->
-    <div class="flex items-center gap-2 sm:gap-3">
-      <div class="w-8 h-8 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center font-black text-lg text-slate-950 shadow-md shadow-emerald-500/20 shrink-0">
-        O
-      </div>
-      <div>
-        <h1 class="text-base sm:text-lg font-bold tracking-tight bg-gradient-to-r from-emerald-400 to-teal-300 bg-clip-text text-transparent leading-none">ONLY</h1>
-        <p class="text-[9px] text-slate-400 mt-0.5 hidden sm:flex items-center gap-1">
-          <span class="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-          Radar Kết Nối Vị Trí Thực Tế
-        </p>
-      </div>
-    </div>
+      <a href="#" class="only-brand flex items-center gap-2 sm:gap-3" aria-label="Only - Trang chủ">
+        <img src="/only-brand-logo.png" alt="Logo thương hiệu Only" class="only-brand-logo w-10 h-10 sm:w-11 sm:h-11 rounded-xl object-cover shadow-lg shrink-0">
+        <div>
+          <h1 class="text-base sm:text-lg font-black tracking-tight text-white leading-none">ONLY</h1>
+          <p class="text-[9px] text-slate-300 mt-0.5 hidden sm:flex items-center gap-1">
+            <span class="inline-block w-1.5 h-1.5 rounded-full bg-[#ED0309] animate-pulse"></span>
+            Radar Kết Nối Vị Trí Thực Tế
+          </p>
+        </div>
+      </a>
 
     <!-- Right Controls -->
     <div class="flex items-center gap-1.5 sm:gap-2">
