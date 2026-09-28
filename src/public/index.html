@@ -217,7 +217,7 @@
       </div>
 
       <!-- TAB PANEL: ONLY RIDE (KẾT NỐI ĐI LẠI / TIỆN CHUYẾN CỘNG ĐỒNG) -->
-      <div id="panelRide" class="flex-1 overflow-y-auto p-3.5 hidden flex-col gap-3.5">
+      <div id="panelRide" class="flex-1 overflow-y-auto p-3.5 hidden flex-col gap-3.5" aria-label="Only Ride">
         <!-- Driver Earning Mode Toggle Box -->
         <div class="bg-gradient-to-r from-amber-950/40 via-slate-800 to-slate-800/90 p-3.5 rounded-2xl border border-amber-600/50 flex flex-col gap-2.5 shadow">
           <div class="flex items-center justify-between">
@@ -231,7 +231,7 @@
               </div>
             </div>
             <label class="relative inline-flex items-center cursor-pointer">
-              <input type="checkbox" id="driverEarningToggle" class="sr-only peer">
+              <input type="checkbox" id="driverEarningToggle" class="sr-only peer" aria-label="Bật chế độ tài xế kiếm tiền">
               <div class="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-500"></div>
             </label>
           </div>
@@ -336,7 +336,7 @@
                 <p id="activeRideDetailText" class="text-[10px] text-slate-400">Đã phát sóng tới các tài xế lân cận</p>
               </div>
             </div>
-            <button id="btnCancelActiveRide" class="px-2.5 py-1 bg-rose-600/80 hover:bg-rose-600 text-white text-[10px] font-bold rounded-lg transition">
+            <button id="btnCancelActiveRide" type="button" class="min-h-11 px-3 bg-rose-600/80 hover:bg-rose-600 text-white text-[10px] font-bold rounded-lg transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300">
               Huỷ cuốc
             </button>
           </div>

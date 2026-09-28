@@ -3,21 +3,33 @@ import { RidesService } from './rides.service';
 import { authMiddleware, AuthenticatedRequest } from '../auth/auth.middleware';
 
 const router: Router = Router();
+const vehicleTypes = ['motorbike', 'car_4seats', 'car_7seats'];
+const maxPlaceNameLength = 200;
+const maxNoteLength = 500;
+
+function isValidCoordinatePair(lat: unknown, lon: unknown): boolean {
+  const latitude = Number(lat);
+  const longitude = Number(lon);
+  return lat !== undefined && lon !== undefined && lat !== null && lon !== null && lat !== '' && lon !== '' && Number.isFinite(latitude) && Number.isFinite(longitude) && latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180;
+}
 
 // POST /api/v1/rides/estimate (Tính km, thời gian & giá sàn tham khảo)
 router.post('/estimate', authMiddleware, (req: AuthenticatedRequest, res: Response) => {
   try {
     const { pickupLat, pickupLon, dropoffLat, dropoffLon, vehicleType } = req.body;
     const coords = [pickupLat, pickupLon, dropoffLat, dropoffLon].map(Number);
-    if (coords.some((value) => !Number.isFinite(value)) || coords[0] < -90 || coords[0] > 90 || coords[2] < -90 || coords[2] > 90 || coords[1] < -180 || coords[1] > 180 || coords[3] < -180 || coords[3] > 180) {
+    if (!isValidCoordinatePair(pickupLat, pickupLon) || !isValidCoordinatePair(dropoffLat, dropoffLon)) {
       return res.status(400).json({ success: false, message: 'Vui lòng cung cấp tọa độ hợp lệ cho điểm đón và điểm đến' });
+    }
+    if (vehicleType !== undefined && !vehicleTypes.includes(vehicleType)) {
+      return res.status(400).json({ success: false, message: 'Loại phương tiện không hợp lệ' });
     }
     const estimate = RidesService.estimateTrip(
       coords[0],
       coords[1],
       coords[2],
       coords[3],
-      vehicleType || 'motorbike'
+      (vehicleType || 'motorbike') as 'motorbike' | 'car_4seats' | 'car_7seats'
     );
     res.json({ success: true, data: estimate });
   } catch (error: any) {
@@ -43,15 +55,32 @@ router.post('/earning-mode', authMiddleware, (req: AuthenticatedRequest, res: Re
 router.post('/request', authMiddleware, (req: AuthenticatedRequest, res: Response) => {
   try {
     const body = req.body;
-    const requiredText = ['pickupName', 'dropoffName'];
-    if (requiredText.some((key) => typeof body[key] !== 'string' || !body[key].trim())) {
-      return res.status(400).json({ success: false, message: 'Vui lòng nhập điểm đón và điểm đến' });
+    if (!body || typeof body !== 'object') {
+      return res.status(400).json({ success: false, message: 'Dữ liệu yêu cầu chuyến đi không hợp lệ' });
     }
-    const coordinateKeys = ['pickupLat', 'pickupLon', 'dropoffLat', 'dropoffLon'];
-    const numericBody = { ...body };
-    for (const key of coordinateKeys) numericBody[key] = Number(body[key]);
-    if (numericBody[coordinateKeys[0]] < -90 || numericBody[coordinateKeys[0]] > 90 || numericBody[coordinateKeys[2]] < -90 || numericBody[coordinateKeys[2]] > 90 || numericBody[coordinateKeys[1]] < -180 || numericBody[coordinateKeys[1]] > 180 || numericBody[coordinateKeys[3]] < -180 || numericBody[coordinateKeys[3]] > 180 || coordinateKeys.some((key) => !Number.isFinite(numericBody[key]))) {
+    const requiredText = ['pickupName', 'dropoffName'];
+    if (requiredText.some((key) => typeof body[key] !== 'string' || !body[key].trim() || body[key].trim().length > maxPlaceNameLength)) {
+      return res.status(400).json({ success: false, message: 'Tên điểm đón và điểm đến không hợp lệ' });
+    }
+    if (!isValidCoordinatePair(body.pickupLat, body.pickupLon) || !isValidCoordinatePair(body.dropoffLat, body.dropoffLon)) {
       return res.status(400).json({ success: false, message: 'Tọa độ điểm đón/điểm đến không hợp lệ' });
+    }
+    if (!vehicleTypes.includes(body.vehicleType)) {
+      return res.status(400).json({ success: false, message: 'Loại phương tiện không hợp lệ' });
+    }
+    if (body.passengerNote !== undefined && (typeof body.passengerNote !== 'string' || body.passengerNote.trim().length > maxNoteLength)) {
+      return res.status(400).json({ success: false, message: 'Ghi chú hành khách không hợp lệ' });
+    }
+    const numericBody = {
+      ...body,
+      pickupLat: Number(body.pickupLat),
+      pickupLon: Number(body.pickupLon),
+      dropoffLat: Number(body.dropoffLat),
+      dropoffLon: Number(body.dropoffLon),
+      suggestedPrice: body.suggestedPrice === undefined || body.suggestedPrice === '' ? undefined : Number(body.suggestedPrice),
+    };
+    if (numericBody.suggestedPrice !== undefined && (!Number.isFinite(numericBody.suggestedPrice) || numericBody.suggestedPrice < 0 || numericBody.suggestedPrice > 100000000)) {
+      return res.status(400).json({ success: false, message: 'Giá đề xuất không hợp lệ' });
     }
     const ride = RidesService.createRideRequest(req.user!.userId, numericBody);
     res.status(201).json({

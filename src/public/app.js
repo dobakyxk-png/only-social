@@ -1842,7 +1842,8 @@ function setupEventListeners() {
   if (openGroupBtn) openGroupBtn.onclick = openGroupChatModal;
   if (closeGroupBtn) closeGroupBtn.onclick = closeGroupChatModal;
   if (createGroupBtn) createGroupBtn.onclick = createGroupChat;
-  document.getElementById('groupChatModal')?.addEventListener('click', (event) => {
+  const groupModal = document.getElementById('groupChatModal');
+  if (groupModal) groupModal.addEventListener('click', (event) => {
     if (event.target.id === 'groupChatModal') closeGroupChatModal();
   });
 
@@ -2306,18 +2307,15 @@ async function loadOpenRideRequests() {
   if (status) status.textContent = 'Đang tìm cuốc xe phù hợp...';
   list.innerHTML = '<div class="text-center py-4 text-xs text-slate-500">Đang tải...</div>';
   try {
-    // GET /rides/active returns the authenticated user ride only; notifications carry open ride ids.
-    const notifiedIds = STATE.notifications.map((n) => n.data?.rideId).filter(Boolean);
-    const requests = [];
-    for (const rideId of notifiedIds) {
-      try {
-        const response = await apiRequest(`/rides/${rideId}/offers`);
-        const ride = response.ride || response.data?.ride;
-        if (ride && ['searching', 'negotiating'].includes(ride.status)) requests.push(ride);
-      } catch (err) {
-        // A driver may not be authorized to read another passenger's offers; keep discovery usable.
-      }
-    }
+    // The current backend exposes private ride details only to participants. Driver
+    // discovery therefore uses the route/price snapshot in ride notifications.
+    const requests = STATE.notifications
+      .filter((notification) => {
+        const title = String(notification.title || '').toLowerCase();
+        return Boolean(notification.data?.rideId) && title.includes('cuốc xe tiện chuyến mới');
+      })
+      .map(parseRideRequestNotification)
+      .filter(Boolean);
     STATE.rideOpenRequests = requests.filter((ride, index, arr) => arr.findIndex((item) => item.id === ride.id) === index);
     renderOpenRideRequests();
     if (status) status.textContent = STATE.rideOpenRequests.length ? `${STATE.rideOpenRequests.length} cuốc đang chờ báo giá` : 'Chưa có cuốc mới. Bạn sẽ nhận thông báo khi có cuốc phù hợp.';
@@ -2325,6 +2323,26 @@ async function loadOpenRideRequests() {
     if (status) status.textContent = err.message;
     list.innerHTML = `<div class="text-center py-4 text-xs text-rose-400">${err.message}</div>`;
   }
+}
+
+function parseRideRequestNotification(notification) {
+  const data = notification.data || notification.payloadData || {};
+  const body = String(notification.body || '');
+  const routeMatch = body.match(/cần đi\s+([\d.,]+)km từ (.+?) tới (.+?)(?: \(Giá đề xuất:\s*([\d.,]+)đ\))?$/i);
+  if (!data.rideId || !routeMatch) return null;
+  const distanceKm = Number(routeMatch[1].replace(',', '.'));
+  const suggestedPrice = Number((routeMatch[4] || '0').replace(/[.,]/g, ''));
+  if (!Number.isFinite(distanceKm) || !Number.isFinite(suggestedPrice)) return null;
+  return {
+    id: data.rideId,
+    pickupName: routeMatch[2].trim(),
+    dropoffName: routeMatch[3].trim(),
+    distanceKm,
+    suggestedPrice,
+    status: 'searching',
+    createdAt: notification.createdAt,
+    // Coordinates are deliberately absent: the available notification route has no coordinates.
+  };
 }
 
 function renderOpenRideRequests() {
@@ -2353,8 +2371,10 @@ function selectDriverRide(ride) {
   document.getElementById('driverRideRouteLabel').textContent = `${ride.pickupName} → ${ride.dropoffName}`;
   document.getElementById('driverOfferPrice').value = ride.suggestedPrice || '';
   document.getElementById('driverOfferEta').value = '5';
-  document.getElementById('driverOfferStatus').textContent = '';
-  STATE.map?.fitBounds([[ride.pickupLat, ride.pickupLon], [ride.dropoffLat, ride.dropoffLon]], { padding: [40, 40], maxZoom: 15 });
+  document.getElementById('driverOfferStatus').textContent = 'Thông báo không kèm tọa độ; gửi báo giá theo thông tin tuyến hiện có.';
+  if (Number.isFinite(ride.pickupLat) && Number.isFinite(ride.pickupLon) && Number.isFinite(ride.dropoffLat) && Number.isFinite(ride.dropoffLon)) {
+    STATE.map?.fitBounds([[ride.pickupLat, ride.pickupLon], [ride.dropoffLat, ride.dropoffLon]], { padding: [40, 40], maxZoom: 15 });
+  }
 }
 
 async function submitDriverOffer() {

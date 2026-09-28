@@ -260,7 +260,7 @@ describe('Only Ride Service (Kết nối Đi lại & Tiện chuyến Cộng đ�
       estimatedPickupMins: 5,
     });
 
-    const offers = RidesService.getRideOffers(ride.id);
+    const offers = RidesService.getRideOffers(ride.id, passengerId);
     expect(offers.length).toBe(1);
     expect(offers[0].driverId).toBe(driverId);
     expect(offers[0].driver.fullName).toBe('Trần Văn Driver');

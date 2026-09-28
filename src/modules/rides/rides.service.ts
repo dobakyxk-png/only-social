@@ -10,10 +10,10 @@ import {
 import { calculateDistance } from '../../utils/geo';
 import { NotificationsService } from '../notifications/notifications.service';
 
-const VEHICLE_TYPES: Array<CreateRideInput['vehicleType']> = ['motorbike', 'car_4seats', 'car_7seats'];
 const ACTIVE_RIDE_STATUSES: RideStatus[] = ['searching', 'negotiating', 'accepted', 'picking_up', 'arrived', 'in_trip'];
 const OFFERABLE_RIDE_STATUSES: RideStatus[] = ['searching', 'negotiating'];
 const MAX_RIDE_PRICE = 100_000_000;
+const MAX_OFFER_PRICE = 10_000_000;
 const MAX_PLACE_NAME_LENGTH = 200;
 const MAX_NOTE_LENGTH = 500;
 const MAX_VEHICLE_TEXT_LENGTH = 100;
@@ -110,6 +110,17 @@ function emitRideRealtimeEvent(event: RideRealtimeEvent) {
 }
 
 export class RidesService {
+  private static hasActiveRide(userId: string): boolean {
+    for (const ride of db.rideRequests.values()) {
+      if ((ride.passengerId === userId || ride.driverId === userId) && ACTIVE_RIDE_STATUSES.includes(ride.status)) return true;
+    }
+    return false;
+  }
+
+  private static emitRideStatusChange(ride: RideRequest) {
+    emitRideRealtimeEvent({ type: 'status_changed', ride: this.enrichRideDTO(ride) });
+  }
+
   /**
    * Tính toán khoảng cách lộ trình (km), thời gian dự kiến (phút) và giá sàn cộng đồng tham khảo (VNĐ)
    */
@@ -235,6 +246,7 @@ export class RidesService {
     assertCoordinatePair(input.pickupLat, input.pickupLon, 'Toạ độ điểm đón');
     assertCoordinatePair(input.dropoffLat, input.dropoffLon, 'Toạ độ điểm đến');
     if (!isVehicleType(input.vehicleType)) throw new Error('Loại phương tiện không hợp lệ');
+    if (calculateDistance(input.pickupLat, input.pickupLon, input.dropoffLat, input.dropoffLon) < 20) throw new Error('Điểm đón và điểm đến phải cách nhau ít nhất 20m');
     const suggestedPrice = normalizePrice(input.suggestedPrice, 'Giá đề xuất', true);
     const passengerNote = normalizeOptionalText(input.passengerNote, 'Ghi chú hành khách', MAX_NOTE_LENGTH);
 
@@ -280,6 +292,7 @@ export class RidesService {
     };
 
     db.rideRequests.set(rideId, ride);
+    this.emitRideStatusChange(ride);
 
     // Quét tìm các tài xế lân cận đang bật kiếm tiền để thông báo
     const nearbyDrivers = this.findNearbyDrivers(input.pickupLat, input.pickupLon, input.vehicleType, 5000);
@@ -345,18 +358,18 @@ export class RidesService {
     rideId: string,
     data: { offeredPrice: number; estimatedPickupMins?: number; note?: string }
   ): RideOffer {
+    assertActiveUser(driverId);
     const ride = db.rideRequests.get(rideId);
     if (!ride) throw new Error('Cuốc xe không tồn tại');
     if (ride.passengerId === driverId) throw new Error('Hành khách không thể tự gửi báo giá cho mình');
+    if (!OFFERABLE_RIDE_STATUSES.includes(ride.status)) throw new Error('Cuốc xe này đã có người nhận hoặc đã kết thúc');
     const mode = db.driverEarningModes.get(driverId);
     const vehicle = db.driverProfiles.get(driverId);
     if (!mode?.isActive || mode.status !== 'idle') throw new Error('Bạn chưa bật Chế độ Kiếm Tiền hoặc đang bận chuyến khác');
     if (!vehicle || vehicle.vehicleType !== ride.vehicleType) throw new Error('Phương tiện của bạn không phù hợp với yêu cầu');
-    if (!Number.isFinite(data.offeredPrice) || data.offeredPrice < 1000 || data.offeredPrice > 10000000) throw new Error('Giá báo không hợp lệ');
-    if (data.estimatedPickupMins !== undefined && (!Number.isFinite(data.estimatedPickupMins) || data.estimatedPickupMins < 1 || data.estimatedPickupMins > 180)) throw new Error('Thời gian đón không hợp lệ');
-    if (['accepted', 'picking_up', 'arrived', 'in_trip', 'completed', 'cancelled'].includes(ride.status)) {
-      throw new Error('Cuốc xe này đã có người nhận hoặc đã kết thúc');
-    }
+    if (typeof data.offeredPrice !== 'number' || !Number.isFinite(data.offeredPrice) || data.offeredPrice < 1000 || data.offeredPrice > MAX_OFFER_PRICE) throw new Error('Giá báo không hợp lệ');
+    if (data.estimatedPickupMins !== undefined && (typeof data.estimatedPickupMins !== 'number' || !Number.isFinite(data.estimatedPickupMins) || data.estimatedPickupMins < 1 || data.estimatedPickupMins > 180)) throw new Error('Thời gian đón không hợp lệ');
+    const note = normalizeOptionalText(data.note, 'Ghi chú báo giá', MAX_NOTE_LENGTH);
 
     const existingOffer = Array.from(db.rideOffers.values()).find((item) => item.rideId === rideId && item.driverId === driverId && item.status === 'pending');
     if (existingOffer) throw new Error('Bạn đã gửi báo giá cho cuốc xe này');
@@ -367,8 +380,8 @@ export class RidesService {
       rideId,
       driverId,
       offeredPrice: data.offeredPrice,
-      estimatedPickupMins: data.estimatedPickupMins || 5,
-      note: data.note,
+      estimatedPickupMins: data.estimatedPickupMins ?? 5,
+      note,
       status: 'pending',
       createdAt: new Date(),
     };
@@ -376,6 +389,7 @@ export class RidesService {
     db.rideOffers.set(offerId, offer);
     ride.status = 'negotiating';
     db.rideRequests.set(rideId, ride);
+    this.emitRideStatusChange(ride);
 
     // Thông báo cho khách hàng biết có tài xế gửi báo giá
     const driverProfile = db.profiles.get(driverId);
@@ -395,6 +409,7 @@ export class RidesService {
    * Hành khách chọn và chốt tài xế (Khớp lệnh cuốc xe & Tích hợp Bảo hiểm nhúng)
    */
   static acceptDriverOffer(passengerId: string, rideId: string, offerId: string): RideDTO {
+    assertActiveUser(passengerId);
     const ride = db.rideRequests.get(rideId);
     if (!ride) throw new Error('Chuyến đi không tồn tại');
     if (ride.passengerId !== passengerId) throw new Error('Bạn không có quyền chốt chuyến này');
@@ -402,7 +417,13 @@ export class RidesService {
     const offer = db.rideOffers.get(offerId);
     if (!offer || offer.rideId !== rideId || offer.status !== 'pending') throw new Error('Đề xuất giá không hợp lệ hoặc đã được xử lý');
     if (ride.status !== 'searching' && ride.status !== 'negotiating') throw new Error('Cuốc xe đã được chốt hoặc kết thúc');
-    if (!db.driverEarningModes.get(offer.driverId)?.isActive) throw new Error('Tài xế không còn bật Chế độ Kiếm Tiền');
+    assertActiveUser(offer.driverId, 'Tài xế không còn khả dụng');
+    const driverMode = db.driverEarningModes.get(offer.driverId);
+    const driverVehicle = db.driverProfiles.get(offer.driverId);
+    if (!driverMode?.isActive || driverMode.status !== 'idle' || !driverVehicle || driverVehicle.vehicleType !== ride.vehicleType) {
+      throw new Error('Tài xế không còn khả dụng cho chuyến đi này');
+    }
+    if (this.hasActiveRide(offer.driverId)) throw new Error('Tài xế đang có chuyến đi khác');
 
     // Chốt cuốc xe
     ride.driverId = offer.driverId;
@@ -414,6 +435,7 @@ export class RidesService {
     ride.insurancePolicyId = `INS-RIDE-${Date.now().toString().slice(-6)}-VN`;
 
     db.rideRequests.set(rideId, ride);
+    this.emitRideStatusChange(ride);
     offer.status = 'accepted';
     db.rideOffers.set(offerId, offer);
     for (const otherOffer of db.rideOffers.values()) {
@@ -424,10 +446,10 @@ export class RidesService {
     }
 
     // Cập nhật trạng thái tài xế sang đang bận
-    const driverMode = db.driverEarningModes.get(offer.driverId);
-    if (driverMode) {
-      driverMode.status = 'busy';
-      db.driverEarningModes.set(offer.driverId, driverMode);
+    const acceptedDriverMode = db.driverEarningModes.get(offer.driverId);
+    if (acceptedDriverMode) {
+      acceptedDriverMode.status = 'busy';
+      db.driverEarningModes.set(offer.driverId, acceptedDriverMode);
     }
 
     // Gửi thông báo tới tài xế
@@ -441,7 +463,9 @@ export class RidesService {
       payloadData: { rideId: ride.id },
     });
 
-    return this.enrichRideDTO(ride);
+    const dto = this.enrichRideDTO(ride);
+    emitRideRealtimeEvent({ type: 'status_changed', ride: dto });
+    return dto;
   }
 
   /** Cập nhật trạng thái và gửi trạng thái mới cho cả hai bên qua gateway. */
@@ -450,8 +474,11 @@ export class RidesService {
     rideId: string,
     status: RideStatus
   ): RideDTO {
+    assertActiveUser(userId);
+    if (!isRideStatus(status)) throw new Error('Trạng thái chuyến đi không hợp lệ');
     const ride = db.rideRequests.get(rideId);
     if (!ride) throw new Error('Chuyến đi không tồn tại');
+    const previousStatus = ride.status;
 
     if (ride.passengerId !== userId && ride.driverId !== userId) {
       throw new Error('Bạn không có quyền thay đổi trạng thái chuyến này');
@@ -478,11 +505,20 @@ export class RidesService {
       throw new Error(`Không thể chuyển trạng thái từ ${ride.status} sang ${status}`);
     }
 
-    ride.status = status;
-    if (status === 'cancelled') {
-      ride.cancelledBy = ride.driverId === userId ? 'driver' : 'passenger';
+    if (ride.status !== status) {
+      ride.status = status;
+      if (status === 'cancelled') {
+        ride.cancelledBy = ride.driverId === userId ? 'driver' : 'passenger';
+        if (ride.driverId) {
+          const driverMode = db.driverEarningModes.get(ride.driverId);
+          if (driverMode) {
+            driverMode.status = 'idle';
+            db.driverEarningModes.set(ride.driverId, driverMode);
+          }
+        }
+      }
     }
-    if (status === 'completed') {
+    if (status === 'completed' && !ride.completedAt) {
       ride.completedAt = new Date();
       // Khôi phục tài xế về trạng thái rảnh rỗi và tăng số chuyến
       if (ride.driverId) {
@@ -500,28 +536,33 @@ export class RidesService {
     }
 
     db.rideRequests.set(rideId, ride);
-    return this.enrichRideDTO(ride);
+    const dto = this.enrichRideDTO(ride);
+    if (previousStatus !== ride.status) emitRideRealtimeEvent({ type: 'status_changed', ride: dto });
+    return dto;
   }
 
   /** Tài xế stream vị trí tới điểm đón; chỉ tài xế của cuốc được cập nhật. */
   static updateDriverLocation(userId: string, rideId: string, lat: number, lon: number): RideDTO {
+    assertActiveUser(userId);
     const ride = db.rideRequests.get(rideId);
     if (!ride || ride.driverId !== userId) throw new Error('Bạn không có quyền cập nhật vị trí cho chuyến này');
-    if (!Number.isFinite(lat) || !Number.isFinite(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
-      throw new Error('Toạ độ GPS không hợp lệ');
-    }
+    if (!ACTIVE_RIDE_STATUSES.includes(ride.status)) throw new Error('Chuyến đi không còn hoạt động');
+    assertCoordinatePair(lat, lon, 'Toạ độ GPS');
     ride.driverLat = lat;
     ride.driverLon = lon;
     ride.driverLocationUpdatedAt = new Date();
     db.rideRequests.set(rideId, ride);
-    return this.enrichRideDTO(ride);
+    const dto = this.enrichRideDTO(ride);
+    emitRideRealtimeEvent({ type: 'driver_moved', ride: dto });
+    return dto;
   }
 
   /** Lấy danh sách các đề xuất giá cho một cuốc xe */
   static getRideOffers(rideId: string, viewerId?: string) {
+    if (viewerId) assertActiveUser(viewerId);
     const ride = db.rideRequests.get(rideId);
     if (!ride) throw new Error('Cuốc xe không tồn tại');
-    if (viewerId && ride.passengerId !== viewerId && ride.driverId !== viewerId) throw new Error('Bạn không có quyền xem báo giá của cuốc xe này');
+    if (!viewerId || (ride.passengerId !== viewerId && ride.driverId !== viewerId)) throw new Error('Bạn không có quyền xem báo giá của cuốc xe này');
     const offers = [];
     for (const off of db.rideOffers.values()) {
       if (off.rideId === rideId) {
@@ -554,10 +595,11 @@ export class RidesService {
    * Lấy chi tiết cuốc xe hiện tại của người dùng
    */
   static getCurrentActiveRide(userId: string): RideDTO | null {
+    assertActiveUser(userId);
     for (const r of db.rideRequests.values()) {
       if (
         (r.passengerId === userId || r.driverId === userId) &&
-        ['searching', 'negotiating', 'accepted', 'picking_up', 'arrived', 'in_trip'].includes(r.status)
+        ACTIVE_RIDE_STATUSES.includes(r.status)
       ) {
         return this.enrichRideDTO(r);
       }

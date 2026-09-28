@@ -95,6 +95,94 @@
   line-height: 1;
 }
 
+/* Only Ride map markers, route and status timeline */
+.ride-endpoint-icon,
+.ride-driver-icon {
+  background: transparent;
+  border: 0;
+}
+
+.ride-endpoint-icon span {
+  display: block;
+  width: 22px;
+  height: 22px;
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  background: var(--ride-marker-color, #34d399);
+  border: 3px solid #fff;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, .55);
+}
+
+.ride-driver-icon span {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #0f172a;
+  border: 2px solid #38bdf8;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, .55);
+  font-size: 17px;
+}
+
+#map.ride-map-picking {
+  cursor: crosshair;
+}
+
+.ride-status-timeline {
+  display: flex;
+  gap: .35rem;
+  overflow-x: auto;
+  padding: .2rem 0 .35rem;
+  scrollbar-width: thin;
+}
+
+.ride-status-step {
+  display: inline-flex;
+  align-items: center;
+  gap: .3rem;
+  flex: 0 0 auto;
+  color: #64748b;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.ride-status-marker {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid #475569;
+  border-radius: 999px;
+  font-size: 9px;
+}
+
+.ride-status-step.is-done,
+.ride-status-step.is-current {
+  color: #a7f3d0;
+}
+
+.ride-status-step.is-done .ride-status-marker {
+  background: #059669;
+  border-color: #34d399;
+  color: #ecfdf5;
+}
+
+.ride-status-step.is-current .ride-status-marker {
+  background: #f59e0b;
+  border-color: #fbbf24;
+  color: #111827;
+}
+
+.ride-status-step.is-cancelled {
+  color: #fda4af;
+}
+
+.ride-status-step.is-cancelled .ride-status-marker {
+  border-color: #fb7185;
+  color: #fb7185;
+}
+
 /* Thanh cuộn tối giản */
 ::-webkit-scrollbar {
   width: 5px;
@@ -114,8 +202,49 @@
   background: #475569;
 }
 
+/* Accessible controls and comfortable touch targets */
+button,
+[role="button"],
+select,
+input,
+textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible,
+[role="button"]:focus-visible,
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid #34d399;
+  outline-offset: 2px;
+}
+
+@media (pointer: coarse) {
+  button,
+  select,
+  input[type="button"],
+  input[type="submit"] {
+    min-height: 44px;
+  }
+}
+
 /* TỐI ƯU GIAO DIỆN DI ĐỘNG (MOBILE-FIRST OPTIMIZATION) */
 @media (max-width: 767px) {
+  #panelRide {
+    padding: .75rem;
+    padding-bottom: calc(4.5rem + env(safe-area-inset-bottom));
+  }
+
+  #panelRide .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ride-status-timeline {
+    margin-inline: -.25rem;
+    padding-inline: .25rem;
+  }
+
   /* Điều khiển lớp bản đồ Google Maps trên điện thoại nằm trên thanh Bottom Nav */
   .leaflet-bottom.leaflet-left {
     bottom: 80px !important;
