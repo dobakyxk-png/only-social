@@ -38,6 +38,7 @@ const STATE = {
   driverEarningMode: false,
   activeRide: null,
   rideOffers: [],
+  rideOffersLoading: false,
   rideOpenRequests: [],
   selectedDriverRideId: null,
   ridePickupCoords: null,
@@ -2286,6 +2287,9 @@ async function loadActiveRide() {
 
 async function loadRideOffers() {
   if (!STATE.activeRide) return;
+  STATE.rideOffersLoading = true;
+  const list = document.getElementById('listDriverOffers');
+  if (list) list.innerHTML = '<div class="text-center py-6 text-xs text-slate-500">Đang tải báo giá từ tài xế...</div>';
   try {
     const res = await apiRequest(`/rides/${STATE.activeRide.id}/offers`);
     STATE.rideOffers = res.data || [];
@@ -2293,8 +2297,9 @@ async function loadRideOffers() {
     renderRideOffers();
     renderActiveRide();
   } catch (err) {
-    const list = document.getElementById('listDriverOffers');
-    if (list) list.innerHTML = `<div class="text-center py-4 text-xs text-rose-400">${err.message}</div>`;
+    if (list) list.innerHTML = `<div class="text-center py-4 text-xs text-rose-400">Không thể tải báo giá: ${err.message}</div>`;
+  } finally {
+    STATE.rideOffersLoading = false;
   }
 }
 
@@ -2702,8 +2707,9 @@ function renderRideOffers() {
 
   listEl.innerHTML = '';
   STATE.rideOffers.forEach((offer) => {
-    const card = document.createElement('div');
-    card.className = 'bg-slate-800/80 border border-slate-700 p-2.5 rounded-xl flex items-center justify-between hover:border-amber-500 transition cursor-pointer';
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'w-full text-left bg-slate-800/80 border border-slate-700 p-2.5 rounded-xl flex items-center justify-between hover:border-amber-500 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300';
     card.innerHTML = `
       <div class="flex items-center gap-2">
         <img src="${offer.driver.avatarUrl || 'https://api.dicebear.com/7.x/bottts/svg?seed=' + offer.driverId}" class="w-10 h-10 rounded-full border border-slate-600">

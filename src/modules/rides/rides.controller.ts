@@ -119,13 +119,13 @@ router.post('/:id/offer', authMiddleware, (req: AuthenticatedRequest, res: Respo
     const { offeredPrice, estimatedPickupMins, note } = req.body;
     const price = Number(offeredPrice);
     const eta = estimatedPickupMins === undefined || estimatedPickupMins === '' ? 5 : Number(estimatedPickupMins);
-    if (!Number.isFinite(price) || price < 1000 || price > 10000000 || !Number.isFinite(eta) || eta < 1 || eta > 180) {
-      return res.status(400).json({ success: false, message: 'Giá báo hoặc thời gian đón không hợp lệ' });
+    if (offeredPrice === undefined || offeredPrice === '' || !Number.isFinite(price) || price < 1000 || price > 10000000 || !Number.isFinite(eta) || eta < 1 || eta > 180 || (note !== undefined && (typeof note !== 'string' || note.trim().length > maxNoteLength))) {
+      return res.status(400).json({ success: false, message: 'Giá báo, thời gian đón hoặc ghi chú không hợp lệ' });
     }
     const offer = RidesService.makeRideOffer(req.user!.userId, req.params.id as string, {
       offeredPrice: price,
       estimatedPickupMins: eta,
-      note: typeof note === 'string' ? note.slice(0, 120) : undefined,
+      note: typeof note === 'string' ? note.trim() : undefined,
     });
     res.status(201).json({ success: true, message: 'Đã gửi báo giá cho hành khách', data: offer });
   } catch (error: any) {
@@ -155,6 +155,9 @@ router.post('/:id/accept-offer/:offerId', authMiddleware, (req: AuthenticatedReq
 router.post('/:id/driver-location', authMiddleware, (req: AuthenticatedRequest, res: Response) => {
   try {
     const { lat, lon } = req.body;
+    if (!isValidCoordinatePair(lat, lon)) {
+      return res.status(400).json({ success: false, message: 'Toạ độ GPS không hợp lệ' });
+    }
     const ride = RidesService.updateDriverLocation(req.user!.userId, req.params.id as string, Number(lat), Number(lon));
     res.json({ success: true, data: ride });
   } catch (error: any) {
@@ -173,10 +176,10 @@ router.post('/:id/status', authMiddleware, (req: AuthenticatedRequest, res: Resp
       'completed',
       'cancelled',
     ];
-    if (!allowedStatuses.includes(status)) {
+    if (typeof status !== 'string' || !allowedStatuses.includes(status as any)) {
       return res.status(400).json({ success: false, message: 'Trạng thái không hợp lệ' });
     }
-    const ride = RidesService.updateRideStatus(req.user!.userId, req.params.id as string, status);
+    const ride = RidesService.updateRideStatus(req.user!.userId, req.params.id as string, status as any);
     res.json({
       success: true,
       message: `Cập nhật trạng thái chuyến đi: ${status}`,

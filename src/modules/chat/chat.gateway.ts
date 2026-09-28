@@ -6,12 +6,26 @@ import { LocationService } from '../location/location.service';
 import { db } from '../../database/data-store';
 import { registerSocketNotificationEmitter } from '../notifications/notifications.service';
 import { CallingService } from '../calling/calling.service';
-import { RidesService } from '../rides/rides.service';
+import { RidesService, registerRideRealtimeEmitter } from '../rides/rides.service';
 
 export function setupSocketGateway(io: Server) {
   // Đăng ký bộ phát thông báo thời gian thực qua WebSocket
   registerSocketNotificationEmitter((recipientId, notification) => {
     io.to(`user:${recipientId}`).emit('notification:new', notification);
+  });
+
+  registerRideRealtimeEmitter((event) => {
+    const recipients = [event.ride.passengerId, event.ride.driverId].filter(Boolean) as string[];
+    if (event.type === 'status_changed') {
+      recipients.forEach((recipientId) => io.to(`user:${recipientId}`).emit('ride:status_changed', { ride: event.ride }));
+    } else {
+      io.to(`user:${event.ride.passengerId}`).emit('ride:driver_moved', {
+        rideId: event.ride.id,
+        lat: event.ride.driverLat,
+        lon: event.ride.driverLon,
+        updatedAt: event.ride.driverLocationUpdatedAt,
+      });
+    }
   });
 
   // Middleware xác thực JWT cho kết nối WebSocket
@@ -246,8 +260,7 @@ export function setupSocketGateway(io: Server) {
     // Tài xế cập nhật vị trí GPS khi đang di chuyển tới đón khách
     socket.on('ride:driver_loc', (data: { rideId: string; lat: number; lon: number }) => {
       try {
-        const ride = RidesService.updateDriverLocation(userId, data.rideId, Number(data.lat), Number(data.lon));
-        io.to(`user:${ride.passengerId}`).emit('ride:driver_moved', { rideId: data.rideId, lat: ride.driverLat, lon: ride.driverLon, updatedAt: ride.driverLocationUpdatedAt });
+        RidesService.updateDriverLocation(userId, data.rideId, Number(data.lat), Number(data.lon));
       } catch (err: any) {
         socket.emit('ride:error', { message: err.message });
       }
@@ -255,9 +268,9 @@ export function setupSocketGateway(io: Server) {
 
     socket.on('ride:status_update', (data: { rideId: string; status: any }) => {
       try {
-        const ride = RidesService.updateRideStatus(userId, data.rideId, data.status);
-        const recipients = [ride.passengerId, ride.driverId].filter(Boolean) as string[];
-        recipients.forEach((recipientId) => io.to(`user:${recipientId}`).emit('ride:status_changed', { ride }));
+        const allowedStatuses = ['picking_up', 'arrived', 'in_trip', 'completed', 'cancelled'];
+        if (!data || typeof data.rideId !== 'string' || !allowedStatuses.includes(data.status)) throw new Error('Trạng thái chuyến đi không hợp lệ');
+        RidesService.updateRideStatus(userId, data.rideId, data.status);
       } catch (err: any) {
         socket.emit('ride:error', { message: err.message });
       }
@@ -265,10 +278,17 @@ export function setupSocketGateway(io: Server) {
 
     // Thông báo sự kiện cuốc xe thời gian thực
     socket.on('ride:notify_passenger', (data: { rideId: string; passengerId: string; message: string }) => {
-      io.to(`user:${data.passengerId}`).emit('ride:alert', {
-        rideId: data.rideId,
-        message: data.message,
-      });
+      try {
+        const ride = db.rideRequests.get(data.rideId);
+        if (!ride || ride.driverId !== userId || ride.passengerId !== data.passengerId) throw new Error('Bạn không có quyền gửi thông báo cho chuyến này');
+        if (typeof data.message !== 'string' || !data.message.trim() || data.message.length > 500) throw new Error('Nội dung thông báo không hợp lệ');
+        io.to(`user:${ride.passengerId}`).emit('ride:alert', {
+          rideId: ride.id,
+          message: data.message.trim(),
+        });
+      } catch (err: any) {
+        socket.emit('ride:error', { message: err.message });
+      }
     });
 
     socket.on('disconnect', () => {
