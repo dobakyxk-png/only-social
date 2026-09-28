@@ -8,7 +8,7 @@ services:
     startCommand: node dist/src/main.js
     envVars:
       - key: MAPBOX_ACCESS_TOKEN
-        value: pk.eyJ1IjoiZG9iYWt5IiwiYSI6ImNtdWt5czFwejAxZjEyem9qazI1eTdqa3UifQ.JzS8Al4eD6qQM5pHkSwAW5Q
+        sync: false
       - key: MAPBOX_STYLE
         value: mapbox://styles/mapbox/streets-v12
       - key: PORT
