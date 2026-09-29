@@ -92,6 +92,7 @@ async function initApp() {
   STATE.token = await onlyStorage.get(ONLY_STORAGE_KEY);
   if (window.ONLY_ZALO_MINI_APP) document.getElementById('zaloMiniAppBanner')?.classList.remove('hidden');
   refreshIcons();
+  setupEventListeners();
 
   // Khởi tạo bản đồ
   initMap();
@@ -113,9 +114,8 @@ async function initApp() {
       openAuthModal('register');
     }
   } else {
-    // Không tự động đăng nhập ngầm vào Lan Anh nữa! Mở ngay modal Đăng ký tài khoản mới cho người dùng
     renderUserHeader();
-    openAuthModal('register');
+    if (!window.ONLY_ZALO_MINI_APP) openAuthModal('register');
     initGeolocation();
     loadNearbyUsers();
     loadFeed();
