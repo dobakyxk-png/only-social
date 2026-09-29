@@ -1,0 +1,15 @@
+{
+  "app": {
+    "title": "Only",
+    "headerTitle": "Only",
+    "headerColor": "#071426",
+    "textColor": "white",
+    "leftButton": "back",
+    "statusBar": "normal",
+    "actionBarHidden": true
+  },
+  "debug": false,
+  "listCSS": ["./style.css", "./brand.css"],
+  "listSyncJS": ["./zalo-adapter.js"],
+  "listAsyncJS": []
+}

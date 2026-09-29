@@ -3,8 +3,15 @@
 // Bản đồ Leaflet, Radar, Chat 1-1, Bảng Tin (Feed), Check-in, Like/Comment & Thông báo
 // ==============================================================================
 
+const ONLY_STORAGE_KEY = 'only_token';
+const onlyStorage = window.onlyMiniStorage || {
+  get: async (key) => window.localStorage?.getItem(key) || null,
+  set: async (key, value) => window.localStorage?.setItem(key, value),
+  remove: async (key) => window.localStorage?.removeItem(key),
+};
+
 const STATE = {
-  token: localStorage.getItem('only_token') || null,
+  token: null,
   currentUser: null,
   currentLat: 21.028511, // Mặc định Hà Nội
   currentLon: 105.854167,
@@ -82,8 +89,9 @@ function showToast(message, type = 'info') {
 // 1. QUẢN LÝ PHIÊN & KHỞI CHẠY ỨNG DỤNG
 // ------------------------------------------------------------------------------
 async function initApp() {
+  STATE.token = await onlyStorage.get(ONLY_STORAGE_KEY);
+  if (window.ONLY_ZALO_MINI_APP) document.getElementById('zaloMiniAppBanner')?.classList.remove('hidden');
   refreshIcons();
-  setupEventListeners();
 
   // Khởi tạo bản đồ
   initMap();
@@ -201,32 +209,24 @@ function openDirectionsForSelectedUser(user) {
 // ------------------------------------------------------------------------------
 // 3. ĐỊNH VỊ GPS VÀ PING TOẠ ĐỘ
 // ------------------------------------------------------------------------------
-function initGeolocation() {
+async function initGeolocation() {
   const statusEl = document.getElementById('gpsStatusText');
-
-  if ('geolocation' in navigator) {
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        STATE.currentLat = pos.coords.latitude;
-        STATE.currentLon = pos.coords.longitude;
-        statusEl.innerText = 'GPS: Đã kết nối thực tế';
-        updateMapPosition();
-        sendLocationPing();
-        loadNearbyUsers();
-        loadCheckinPins();
-      },
-      (err) => {
-        console.warn('Dùng toạ độ mẫu Hà Nội:', err.message);
-        statusEl.innerText = 'GPS: Toạ độ mẫu (Hà Nội)';
-        sendLocationPing();
-        loadNearbyUsers();
-        loadCheckinPins();
-      },
-      { enableHighAccuracy: true, timeout: 5000 }
-    );
-  } else {
-    statusEl.innerText = 'GPS: Trình duyệt không hỗ trợ GPS';
+  try {
+    const pos = await (window.onlyZaloGetLocation ? window.onlyZaloGetLocation() : new Promise((resolve, reject) => navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 8000 })));
+    const coords = pos?.coords || pos;
+    STATE.currentLat = Number(coords.latitude);
+    STATE.currentLon = Number(coords.longitude);
+    statusEl.innerText = 'GPS: Đã kết nối thực tế';
+    updateMapPosition();
     sendLocationPing();
+    loadNearbyUsers();
+    loadCheckinPins();
+  } catch (err) {
+    console.warn('Không lấy được GPS:', err?.message || err);
+    statusEl.innerText = 'GPS: Chưa được cấp quyền';
+    sendLocationPing();
+    loadNearbyUsers();
+    loadCheckinPins();
   }
 }
 
@@ -1585,7 +1585,7 @@ function renderUserHeader() {
 async function quickLogin(identifier, password) {
   const res = await apiRequest('/auth/login', 'POST', { identifier, password });
   STATE.token = res.data.token;
-  localStorage.setItem('only_token', STATE.token);
+  await onlyStorage.set(ONLY_STORAGE_KEY, STATE.token);
   STATE.currentUser = res.data.user;
   renderUserHeader();
   connectSocket();
@@ -1709,7 +1709,7 @@ async function uploadMyAvatar(file) {
 function logout() {
   STATE.token = null;
   STATE.currentUser = null;
-  localStorage.removeItem('only_token');
+  void onlyStorage.remove(ONLY_STORAGE_KEY);
   if (STATE.socket) STATE.socket.disconnect();
   location.reload();
 }
@@ -1721,6 +1721,12 @@ async function apiRequest(endpoint, method = 'GET', body = null) {
   const headers = { 'Content-Type': 'application/json' };
   if (STATE.token) {
     headers['Authorization'] = `Bearer ${STATE.token}`;
+  }
+  if (window.ONLY_ZALO_MINI_APP && window.ONLY_ZALO_SDK?.getAccessToken) {
+    try {
+      const zaloAccessToken = await window.ONLY_ZALO_SDK.getAccessToken();
+      if (zaloAccessToken) headers['X-Zalo-Access-Token'] = zaloAccessToken;
+    } catch (_) { /* existing Only JWT remains the fallback */ }
   }
 
   const opt = { method, headers };
@@ -2208,7 +2214,7 @@ function setupEventListeners() {
 
       alert('Đăng ký tài khoản thành công! Tự động đăng nhập vào Only.');
       STATE.token = res.data.token;
-      localStorage.setItem('only_token', STATE.token);
+      await onlyStorage.set(ONLY_STORAGE_KEY, STATE.token);
       STATE.currentUser = res.data.user;
       renderUserHeader();
       connectSocket();
