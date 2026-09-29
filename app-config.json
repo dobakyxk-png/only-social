@@ -6,10 +6,11 @@
     "textColor": "white",
     "leftButton": "back",
     "statusBar": "normal",
-    "actionBarHidden": true
+    "actionBarHidden": true,
+    "hideAndroidBottomNavigationBar": false,
+    "hideIOSSafeAreaBottom": false
   },
-  "debug": false,
-  "listCSS": ["./style.css", "./brand.css"],
-  "listSyncJS": ["./zalo-adapter.js"],
+  "listCSS": [],
+  "listSyncJS": ["./miniapp.js"],
   "listAsyncJS": []
 }

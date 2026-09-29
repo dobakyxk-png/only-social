@@ -1,0 +1,108 @@
+/* Only brand system: sampled from user-provided logo */
+:root {
+  --only-red: #ed0309;
+  --only-red-dark: #b90008;
+  --only-blue: #3cacfd;
+  --only-blue-dark: #1677c8;
+  --only-navy: #071426;
+  --only-surface: #0d1b2f;
+  --only-surface-raised: #13243c;
+  --only-text-muted: #a8b7ca;
+}
+
+.only-brand-logo {
+  object-position: center;
+  background: #ffffff;
+  border: 2px solid rgba(60, 172, 253, .75);
+  box-shadow: 0 5px 18px rgba(60, 172, 253, .22), 0 0 0 1px rgba(237, 3, 9, .25);
+}
+
+.only-brand:hover .only-brand-logo {
+  border-color: var(--only-red);
+  box-shadow: 0 5px 18px rgba(237, 3, 9, .28), 0 0 0 1px rgba(60, 172, 253, .25);
+}
+
+/* Harmonized brand surfaces and semantic accents */
+body {
+  background: var(--only-navy) !important;
+}
+
+header,
+#sidebar,
+#chatDrawer {
+  background-color: rgba(7, 20, 38, .96) !important;
+  border-color: rgba(60, 172, 253, .22) !important;
+}
+
+.bg-emerald-500,
+.bg-emerald-600,
+.bg-emerald-400 {
+  background-color: var(--only-blue) !important;
+}
+
+.hover\\:bg-emerald-600:hover,
+.hover\\:bg-emerald-500:hover {
+  background-color: var(--only-blue-dark) !important;
+}
+
+.text-emerald-400,
+.text-emerald-300,
+.text-emerald-500 {
+  color: var(--only-blue) !important;
+}
+
+.border-emerald-400,
+.border-emerald-500,
+.border-emerald-800 {
+  border-color: rgba(60, 172, 253, .72) !important;
+}
+
+.bg-emerald-950,
+.bg-emerald-950\/40,
+.bg-emerald-950\/50,
+.bg-emerald-950\/60,
+.bg-emerald-950\/70,
+.bg-emerald-950\/80 {
+  background-color: rgba(22, 119, 200, .18) !important;
+}
+
+.bg-amber-500,
+.bg-amber-600 {
+  background-color: var(--only-red) !important;
+}
+
+.hover\\:bg-amber-600:hover,
+.hover\\:bg-amber-500:hover {
+  background-color: var(--only-red-dark) !important;
+}
+
+.text-amber-400,
+.text-amber-300 {
+  color: #ff5960 !important;
+}
+
+.border-amber-500,
+.border-amber-600,
+.border-amber-800 {
+  border-color: rgba(237, 3, 9, .72) !important;
+}
+
+.bg-amber-950\/40,
+.bg-amber-950\/60 {
+  background-color: rgba(237, 3, 9, .14) !important;
+}
+
+/* Only Ride status timeline */
+.ride-status-step.is-current .ride-status-marker {
+  background: var(--only-red);
+  border-color: #ff5960;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
